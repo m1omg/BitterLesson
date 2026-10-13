@@ -348,7 +348,8 @@
     }
     _spawn(slot) {
       let w = null;
-      if (!workersBroken && typeof Worker !== 'undefined') {
+      if (typeof Worker === 'undefined') workersBroken = true;
+      if (!workersBroken) {
         try { w = makeWorker(); } catch (e) { w = null; workersBroken = true; }
       }
       if (!w) w = new LocalWorker();
@@ -403,6 +404,20 @@
       return Promise.all(ps);
     }
     _dispatch() {
+      // Hidden tab: finish what's running, start nothing new until it's back.
+      if (document.hidden) {
+        if (!this.waitingForVisible) {
+          this.waitingForVisible = true;
+          const resume = () => {
+            if (document.hidden) return;
+            document.removeEventListener('visibilitychange', resume);
+            this.waitingForVisible = false;
+            this._dispatch();
+          };
+          document.addEventListener('visibilitychange', resume);
+        }
+        return;
+      }
       while (this.idle.length && this.queue.length) {
         const w = this.idle.shift();
         const job = this.queue.shift();
@@ -1047,7 +1062,7 @@
       add('games', this.games + (this.running ? ' of ' + this.planned : ''));
       add('positions imagined', fmtBig(this.positions));
       add('time', fmtTime(t));
-      add('cores', String(this.pool ? this.pool.size : WORKERS) + (workersBroken ? ' (main thread)' : ''));
+      add('cores', workersBroken ? 'main thread only' : String(this.pool ? this.pool.size : WORKERS));
     },
     _result(stopped) {
       const el = $('tour-result');
@@ -1760,7 +1775,7 @@
       if (c) add('Learner', fmtRate(c.rate) + ' · epoch ' + (this.epoch || 0) + ' of ' + CNN_EPOCHS);
       add('Learner FLOP', fmtSci(this.flops));
       add('time', fmtTime(this.running ? now() - this.t0 : this.elapsed));
-      if (this.running) $('race-status').textContent = 'training on ' + (this.pool ? this.pool.size : 1) + (workersBroken ? ' slice (main thread)' : ' cores') + ' · ' + fmtInt(this.seen) + ' examples';
+      if (this.running) $('race-status').textContent = 'training ' + (workersBroken ? 'on the main thread' : 'on ' + (this.pool ? this.pool.size : 1) + ' cores') + ' · ' + fmtInt(this.seen) + ' examples';
       else if (this.done) $('race-status').textContent = 'finished';
       else if (stopped) $('race-status').textContent = 'stopped';
     },

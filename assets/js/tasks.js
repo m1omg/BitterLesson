@@ -156,7 +156,7 @@
   }
 
   // Test errors of a ConvNet over a slice of the test set.
-  function cnnEval(msg, post) {
+  async function cnnEval(msg, post) {
     const W = msg.noWasm ? null : BL.digits.cnnWasm(JSON.parse(msg.config));
     if (W) {
       W.P.set(msg.w);
@@ -174,7 +174,9 @@
     const net = replica(msg.config);
     net.setParams(msg.w);
     const wrong = [], preds = [];
+    let last = now();
     for (let i = msg.from; i < msg.to; i++) {
+      if (now() - last > 30) { await yieldNow(); last = now(); net.setParams(msg.w); }
       const z = net.forward(image(state.test, i));
       let b = 0;
       for (let k = 1; k < 10; k++) if (z[k] > z[b]) b = k;
@@ -245,10 +247,12 @@
   }
 
   // The Rulebook reads every test digit once.
-  function rulebookEval(msg, post) {
+  async function rulebookEval(msg, post) {
     const test = state.test, wrong = [], preds = [];
     const t0 = now();
+    let last = t0;
     for (let i = 0; i < test.count; i++) {
+      if (now() - last > 30) { await yieldNow(); last = now(); }
       const r = BL.rulebook.classify(image(test, i));
       if (r.digit !== test.labels[i]) { wrong.push(i); preds.push(r.digit); }
     }
