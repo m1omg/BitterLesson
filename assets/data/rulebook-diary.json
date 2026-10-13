@@ -1,0 +1,249 @@
+{
+ "source": "tests/rulebook-log.md",
+ "note": "Development set: the first 6,000 training digits. Test digits were not used.",
+ "test": {
+  "acc": 91.5,
+  "right": 1829,
+  "of": 2000
+ },
+ "entries": [
+  {
+   "v": "v1",
+   "time": "06:17:29",
+   "minutes": 377.483,
+   "acc": 56.8,
+   "note": "first rulebook: binarize, holes, Zhang-Suen skeleton, stroke ends; 11 rules (2 loops 8, tall loop 0, loop high 9 / low 6, narrow 1, end positions for 2/3/5/7/4)"
+  },
+  {
+   "v": "v2",
+   "time": "06:18:59",
+   "minutes": 378.983,
+   "acc": 75.5,
+   "note": "elongation (ink moments) for 1; open-top and closed 4 rules; 2 with a curl at the foot; 3 = three crossings + ends on the left; 7 = leg end pointing down"
+  },
+  {
+   "v": "v3",
+   "time": "06:20:56",
+   "minutes": 380.933,
+   "acc": 79.1,
+   "note": "hidden loops: re-check thick blobs at a stricter grey level and cut out dim enclosed pixels (heavy pens fill loops); 8 = low loop with two stroke ends above it"
+  },
+  {
+   "v": "v4",
+   "time": "06:22:36",
+   "minutes": 382.6,
+   "acc": 79.8,
+   "note": "mend broken loops: join two stroke ends that are within 5 px on the page but far apart along the skeleton (open 0s, 8s, 9s fixed; but some 3s and 5s now closed into false loops)"
+  },
+  {
+   "v": "v5",
+   "time": "06:23:21",
+   "minutes": 383.35,
+   "acc": 80.0,
+   "note": "only join ends that do not point the same way (the arms of a 3 point the same way; a broken loop's ends meet or overlap)"
+  },
+  {
+   "v": "v6",
+   "time": "06:23:35",
+   "minutes": 383.583,
+   "acc": 81.5,
+   "note": "7 = a long bar in the top quarter, no bar at the bottom, a leg reaching the bottom, ink mostly high (catches 7s whose bar starts with a hook)"
+  },
+  {
+   "v": "v7",
+   "time": "06:24:18",
+   "minutes": 384.3,
+   "acc": 82.2,
+   "note": "a top bar that ends in a free stroke end at the top right is a 5, never a 7 (in a 7 the bar turns into the leg)"
+  },
+  {
+   "v": "v8",
+   "time": "06:24:45",
+   "minutes": 384.75,
+   "acc": 81.8,
+   "note": "3 = crossed 3 times by some vertical line (not just the centre one), an end top left, an end bottom left pointing left. 3s jump from 71% to 86%, but 2s with a curl at the foot now read as 3 (net loss)"
+  },
+  {
+   "v": "v9",
+   "time": "06:25:04",
+   "minutes": 385.067,
+   "acc": 83.1,
+   "note": "3 rule: drop the bottom-bar test (a 3's bottom arc is wide too); exclude shapes with a stroke end at the bottom right instead (that is a 2's foot)"
+  },
+  {
+   "v": "v10",
+   "time": "06:25:28",
+   "minutes": 385.467,
+   "acc": 83.8,
+   "note": "new feature: where the ink sits between 1/4 and 1/2 height. A low loop with the neck on the right and a start pointing left is a 2 with a curled foot, not a 6 (a 6's stem runs down the left)"
+  },
+  {
+   "v": "v11",
+   "time": "06:26:15",
+   "minutes": 386.25,
+   "acc": 82.7,
+   "note": "tried: distance transform to find loops inked solid (blob low = 6, blob high = 9) plus a 6 with an open bowl. Blob rules misfire on thick pens (179 wrong vs 46 right): net loss"
+  },
+  {
+   "v": "v12",
+   "time": "06:26:38",
+   "minutes": 386.633,
+   "acc": 84.0,
+   "note": "removed the solid-blob rules, kept the open-bowl 6 (stem down the left, bowl open to the right)"
+  },
+  {
+   "v": "v13",
+   "time": "06:27:35",
+   "minutes": 387.583,
+   "acc": 84.1,
+   "note": "also join two ends when one heads straight for the other (9s whose loop is left open at the top right); but this closes some 3s and 5s"
+  },
+  {
+   "v": "v14",
+   "time": "06:28:24",
+   "minutes": 388.4,
+   "acc": 84.4,
+   "note": "never close a gap in the left 40% of the digit just because an end heads for it: 3 and 5 are open on the left by design (21 fixed, 1 broken)"
+  },
+  {
+   "v": "v15",
+   "time": "06:29:44",
+   "minutes": 389.733,
+   "acc": 85.5,
+   "note": "removed four early catch-all rules that were mostly wrong (e.g. 'top right to bottom left: 5' was wrong 74 of 84 times); added last-chance rules: almost-closed ring 0, open loop over a straight stem 9, inked-in bowl 6"
+  },
+  {
+   "v": "v16",
+   "time": "06:30:22",
+   "minutes": 390.367,
+   "acc": 86.2,
+   "note": "closed 4: the crossbar sticks out to the right of the loop as a free end (a 9 never has that); open 4: two ends pointing up, side by side, one leg down; the open-loop 9 must have exactly two ends (47 fixed, 6 broken)"
+  },
+  {
+   "v": "v17",
+   "time": "06:31:40",
+   "minutes": 391.667,
+   "acc": 86.1,
+   "note": "tried: 2 = ink upper right at 1/4-1/2 height, lower left at 55-80%, a base. 3s with a curled-up tail match too (4 fixed, 13 broken): reverted"
+  },
+  {
+   "v": "v18",
+   "time": "06:31:52",
+   "minutes": 391.867,
+   "acc": 86.7,
+   "note": "a 0's loop fills the box: it must reach into the bottom quarter. A 9's big loop stops higher, leaving room for the tail (31 nines fixed, 2 zeros broken)"
+  },
+  {
+   "v": "v19",
+   "time": "06:37:59",
+   "minutes": 397.983,
+   "acc": 86.7,
+   "note": "engineering only, same answers: every pass now runs inside the ink's bounding box, unused blob code removed, fixed an off-grid flood bug"
+  },
+  {
+   "v": "v20",
+   "time": "06:38:22",
+   "minutes": 398.367,
+   "acc": 86.8,
+   "note": "8 whose lower loop is open at the bottom: a high loop standing on two legs whose ends point down (first try, any two low ends, also took closed 4s: no gain)"
+  },
+  {
+   "v": "v21",
+   "time": "06:39:07",
+   "minutes": 399.117,
+   "acc": 87.1,
+   "note": "5 = a bay open to the right under the top bar plus a bay open to the left lower down (the belly). Needed each bay's average height: a 2 also opens right, but above its base (first try broke 38 twos)"
+  },
+  {
+   "v": "v22",
+   "time": "06:40:12",
+   "minutes": 400.2,
+   "acc": 88.2,
+   "note": "five last-chance rules before the default: hook pointing left on a wide base (2), hook pointing up over a bowl open left (3), full-width bar with ink high (7), flag at the top right (5), heavy bottom under a stem (6). 70 fixed, 5 broken"
+  },
+  {
+   "v": "v23",
+   "time": "06:40:42",
+   "minutes": 400.7,
+   "acc": 88.5,
+   "note": "a 3's tail at the bottom left points sideways or up; a stroke end pointing down-left there is a 7's leg (24 fixed, 8 broken)"
+  },
+  {
+   "v": "v24",
+   "time": "06:41:49",
+   "minutes": 401.817,
+   "acc": 88.9,
+   "note": "the 2 rule now checks end directions (a 2 starts with a hook, not an arm pointing up, and its base ends pointing right, not a stem pointing down): 4s stop reading as 2. New 1 rule: an upright stem standing on a base serif (first try took 2s whose base pokes out left; fixed by measuring how far the ink drifts left down the middle)"
+  },
+  {
+   "v": "v25",
+   "time": "06:42:21",
+   "minutes": 402.35,
+   "acc": 89.0,
+   "note": "dropped the stem-on-a-base 1 rule: a 2 whose base pokes out left looks the same to these features (6 right, 13 wrong)"
+  },
+  {
+   "v": "v26",
+   "time": "06:43:30",
+   "minutes": 403.5,
+   "acc": 89.3,
+   "note": "measured how much the last 10 px of a stroke bend: a 5 sits on a curled belly, a 7 or a 9 hangs on a straight tail. Rejecting every straight tail lost 5s (33 fixed, 37 broken); rejecting only when the ink also sits high works (28 fixed, 8 broken)"
+  },
+  {
+   "v": "v27",
+   "time": "06:44:12",
+   "minutes": 404.2,
+   "acc": 89.6,
+   "note": "9 whose loop is open at the top right: both loop ends up and to the right, a tail below (19 fixed, 5 broken). Also tried 'a 7 has no stroke end on its right side', but crossbarred 7s do: reverted"
+  },
+  {
+   "v": "v28",
+   "time": "06:44:42",
+   "minutes": 404.7,
+   "acc": 89.7,
+   "note": "3 whose lower bowl closes into a loop: big centred low loop, neck on the right, upper arm open to the left, no base end at the bottom right (12 fixed, 4 broken)"
+  },
+  {
+   "v": "v29",
+   "time": "06:45:15",
+   "minutes": 405.25,
+   "acc": 89.9,
+   "note": "a 6's stem top never hooks to the left (a 2's start does); a small loop at the far bottom left under a start hooking left is a 2's curl (14 fixed, 0 broken)"
+  },
+  {
+   "v": "v30",
+   "time": "06:45:49",
+   "minutes": 405.817,
+   "acc": 90.1,
+   "note": "8 whose lower loop is inked solid: the bottom 40% of the box is over 42% ink, where a 9's thin tail stays near 20% (16 fixed, 6 broken)"
+  },
+  {
+   "v": "v31",
+   "time": "06:46:05",
+   "minutes": 406.083,
+   "acc": 89.9,
+   "note": "tried the textbook ink threshold of 128 instead of 100: slightly worse, back to 100"
+  },
+  {
+   "v": "v32",
+   "time": "06:46:43",
+   "minutes": 406.717,
+   "acc": 90.4,
+   "note": "a thick 0 whose hole sits mid-height but doesn't reach the bottom quarter: a closed ring with no stroke ends at all is a 0 (a 6 always keeps its stem end). Also tried 'flag on top of a closed belly: 5', but it took 44 sixes whose stem curls right: dropped"
+  },
+  {
+   "v": "v33",
+   "time": "06:49:53",
+   "minutes": 409.883,
+   "acc": 90.3,
+   "note": "robustness for drawing-pad input, checked on shrunk / thickened / thinned copies of dev digits: rescale digits drawn much smaller or bigger than standard; re-binarize at a stricter level for a very thick pen and a gentler one for a very fine pen. Dev -0.1, but shrunk 84.3->87.7%, thick 80.3->82.7%, thin 86.1->90.5%"
+  },
+  {
+   "v": "v34",
+   "time": "06:56:31",
+   "minutes": 416.517,
+   "acc": 90.3,
+   "note": "finishing, same answers on dev: readable trace and display features, rules laid out one per entry, a little faster (thinning over a pixel list, no string keys in hot loops), dark-on-light input turned round, faint lines kept after rescaling"
+  }
+ ]
+}

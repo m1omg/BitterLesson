@@ -1,0 +1,848 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>The Bitter Lesson, Rerun</title>
+<meta name="description" content="Rich Sutton's essay The Bitter Lesson, re-run as live experiments on your own device: search against expert knowledge, learning against hand-written rules.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@400;500;600&family=IBM+Plex+Serif:ital,wght@0,400;0,500;0,600;1,400;1,500&display=swap">
+<style>
+/* Layout: a single reading column (about 66 characters) laid over a wider
+   lab bench; each live experiment is an instrument that breaks out to the
+   bench width. Two voices run through everything: amber for human knowledge,
+   blue for computation. Set in IBM Plex: IBM built Deep Blue and ran the
+   statistical speech group, two of the essay's four examples. */
+:root {
+  --bg: #f3f4f6;
+  --bench: #e8ebf0;
+  --panel: #ffffff;
+  --ink: #12151b;
+  --ink-2: #454d5b;
+  --ink-3: #6f7889;
+  --rule: #d3d8e0;
+  --grid: #e6e9ef;
+  --knowledge: #b05e0d;
+  --knowledge-ink: #94500c;
+  --hybrid: #b03f73;
+  --compute: #1a5fd0;
+  --compute-ink: #1652b5;
+  --win: #1d7a4c;
+  --hole: #dfe3ea;
+  --board: #ffffff;
+  --shadow: 0 1px 2px rgba(18, 21, 27, .06), 0 8px 24px rgba(18, 21, 27, .06);
+  --serif: "IBM Plex Serif", Georgia, "Times New Roman", serif;
+  --sans: "IBM Plex Sans Condensed", "IBM Plex Sans", "Arial Narrow", Arial, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  --step--1: .8125rem;
+  --step-0: 1.0625rem;
+  --step-1: 1.25rem;
+  --step-2: 1.5rem;
+  --step-3: 2rem;
+  --step-4: clamp(2.25rem, 6.5vw, 3.75rem);
+  --step-5: clamp(3.1rem, 12vw, 8.25rem);
+  --col: 40rem;
+  --wide: 74rem;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0c0e12;
+    --bench: #12151b;
+    --panel: #171b22;
+    --ink: #e8eaef;
+    --ink-2: #adb4c1;
+    --ink-3: #7f8898;
+    --rule: #272c36;
+    --grid: #1f242d;
+    --knowledge: #f0a04b;
+    --knowledge-ink: #f4b06a;
+    --hybrid: #e57ca8;
+    --compute: #63a9ff;
+    --compute-ink: #86bcff;
+    --win: #53c38b;
+    --hole: #0e1116;
+    --board: #1c212a;
+    --shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 8px 24px rgba(0, 0, 0, .35);
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0c0e12;
+  --bench: #12151b;
+  --panel: #171b22;
+  --ink: #e8eaef;
+  --ink-2: #adb4c1;
+  --ink-3: #7f8898;
+  --rule: #272c36;
+  --grid: #1f242d;
+  --knowledge: #f0a04b;
+  --knowledge-ink: #f4b06a;
+  --hybrid: #e57ca8;
+  --compute: #63a9ff;
+  --compute-ink: #86bcff;
+  --win: #53c38b;
+  --hole: #0e1116;
+  --board: #1c212a;
+  --shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 8px 24px rgba(0, 0, 0, .35);
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html { -webkit-text-size-adjust: 100%; scroll-padding-top: 4rem; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--serif);
+  font-size: var(--step-0);
+  line-height: 1.62;
+  font-feature-settings: "kern", "liga";
+  text-rendering: optimizeLegibility;
+}
+@media (min-width: 48rem) { body { font-size: 1.125rem; } }
+a { color: inherit; text-decoration-thickness: 1px; text-underline-offset: .18em; }
+a:hover { text-decoration-thickness: 2px; }
+:focus-visible { outline: 2px solid var(--compute); outline-offset: 2px; }
+::selection { background: color-mix(in srgb, var(--compute) 25%, transparent); }
+
+.page { padding-inline: 16px; }
+@media (min-width: 40rem) { .page { padding-inline: 28px; } }
+.col { max-width: var(--col); margin-inline: auto; }
+.wide { max-width: var(--wide); margin-inline: auto; }
+h1, h2, h3 { text-wrap: balance; margin: 0; font-weight: 500; }
+p { margin: 0 0 1.05em; }
+.k { color: var(--knowledge-ink); }
+.c { color: var(--compute-ink); }
+.mono, .num { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.label {
+  font-family: var(--sans);
+  font-size: var(--step--1);
+  font-weight: 500;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+em { font-style: italic; }
+
+/* ---------------------------------------------------------------- top bar */
+.topbar {
+  position: sticky;
+  top: env(safe-area-inset-top, 0px);
+  z-index: 20;
+  background: color-mix(in srgb, var(--bg) 88%, transparent);
+  backdrop-filter: saturate(1.4) blur(10px);
+  -webkit-backdrop-filter: saturate(1.4) blur(10px);
+  border-bottom: 1px solid var(--rule);
+}
+.topbar-in {
+  display: flex; align-items: center; gap: 1rem;
+  min-height: 2.6rem;
+  max-width: var(--wide); margin-inline: auto;
+  padding-inline: 16px;
+}
+.topbar .brand { font-family: var(--serif); font-weight: 500; font-size: .95rem; white-space: nowrap; text-decoration: none; }
+.topbar nav { display: none; gap: 1.1rem; font-family: var(--sans); font-size: .85rem; color: var(--ink-2); }
+.topbar nav a { text-decoration: none; }
+.topbar nav a:hover { color: var(--ink); }
+@media (min-width: 60rem) { .topbar nav { display: flex; } }
+.meter {
+  margin-left: auto;
+  display: flex; align-items: center; gap: .55rem;
+  font-family: var(--mono); font-size: .75rem; color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.meter .dot { width: .5rem; height: .5rem; border-radius: 50%; background: var(--rule); flex: none; }
+.meter.busy .dot { background: var(--compute); box-shadow: 0 0 0 0 color-mix(in srgb, var(--compute) 50%, transparent); animation: pulse 1.4s ease-out infinite; }
+@keyframes pulse { to { box-shadow: 0 0 0 .5rem transparent; } }
+.meter .sep { color: var(--rule); }
+@media (max-width: 26rem) { .meter .flopwrap { display: none; } }
+
+/* ---------------------------------------------------------------- hero */
+.hero { padding-block: clamp(2.5rem, 7vw, 5.5rem) 1.5rem; }
+.hero .eyebrow { margin-bottom: 1.25rem; }
+.hero h1 {
+  font-size: var(--step-5);
+  line-height: .92;
+  letter-spacing: -.035em;
+  font-weight: 500;
+  margin-bottom: clamp(1.5rem, 4vw, 2.5rem);
+}
+.hero h1 .bitter { font-style: italic; font-weight: 400; color: var(--knowledge-ink); }
+.lede {
+  font-size: clamp(1.3rem, 3.2vw, 1.85rem);
+  line-height: 1.38;
+  font-weight: 400;
+  margin-bottom: 1.4rem;
+  max-width: 34em;
+}
+.lede .q { color: var(--ink-3); }
+.hero .sub { color: var(--ink-2); max-width: var(--col); }
+.cite { font-family: var(--sans); font-size: var(--step--1); color: var(--ink-3); letter-spacing: .02em; }
+
+/* ---------------------------------------------------------------- figures */
+figure { margin: 0; }
+.figure { margin-block: 1.5rem 2.5rem; }
+.figcap { font-family: var(--sans); font-size: .875rem; line-height: 1.45; color: var(--ink-3); margin-top: .65rem; max-width: var(--col); }
+.figcap strong { color: var(--ink-2); font-weight: 600; }
+canvas { display: block; width: 100%; touch-action: manipulation; }
+.chart { position: relative; max-width: 100%; }
+.chart canvas { height: 100%; }
+.ratio-hero { aspect-ratio: 16 / 7; min-height: 15rem; }
+.ratio-wide { aspect-ratio: 16 / 8; min-height: 17rem; }
+.ratio-scale { aspect-ratio: 16 / 9; }
+.ratio-diary { aspect-ratio: 16 / 7; min-height: 14rem; }
+@media (max-width: 40rem) {
+  .ratio-hero, .ratio-wide { aspect-ratio: auto; height: 21rem; }
+  .ratio-scale { aspect-ratio: auto; height: 26rem; }
+  .ratio-diary { aspect-ratio: auto; min-height: 0; height: 17rem; }
+}
+.tip {
+  position: absolute; pointer-events: none; z-index: 5;
+  background: var(--panel); color: var(--ink);
+  border: 1px solid var(--rule); box-shadow: var(--shadow);
+  font-family: var(--sans); font-size: .82rem; line-height: 1.35;
+  padding: .45rem .6rem; border-radius: 3px; max-width: 16rem;
+}
+.tip b { font-weight: 600; }
+.tip .mono { font-size: .76rem; color: var(--ink-2); }
+
+/* ---------------------------------------------------------------- prose */
+section.chapter { padding-block: clamp(3rem, 8vw, 6rem) 1rem; }
+.chapter-head { display: grid; gap: .5rem; margin-bottom: 1.75rem; }
+.chapter-head .numeral { font-family: var(--sans); font-weight: 500; letter-spacing: .14em; text-transform: uppercase; font-size: .9rem; color: var(--ink-3); }
+.chapter-head h2 { font-size: var(--step-4); line-height: 1.02; letter-spacing: -.02em; }
+h3 { font-size: var(--step-2); line-height: 1.2; margin: 2.2rem 0 .8rem; }
+blockquote {
+  margin: 1.6rem 0;
+  padding: 0;
+  font-size: 1.22em;
+  line-height: 1.45;
+  font-style: italic;
+  color: var(--ink);
+}
+blockquote footer { font-style: normal; margin-top: .5rem; }
+.pattern { counter-reset: p; list-style: none; padding: 0; margin: 1.4rem 0 1.6rem; display: grid; gap: .6rem; }
+.pattern li { counter-increment: p; display: grid; grid-template-columns: 2rem 1fr; gap: .25rem; font-style: italic; }
+.pattern li::before { content: counter(p) ")"; font-family: var(--mono); font-style: normal; font-size: .9em; color: var(--ink-3); padding-top: .12em; }
+.pattern li:nth-child(1), .pattern li:nth-child(2) { color: var(--knowledge-ink); }
+.pattern li:nth-child(4) { color: var(--compute-ink); }
+
+.sketch { margin: 1.5rem 0 2rem; }
+.sketch svg { width: 100%; height: auto; display: block; }
+
+/* ---------------------------------------------------------------- contestants */
+.duo { display: grid; gap: 1rem; margin-block: 1.8rem 1.4rem; }
+@media (min-width: 46rem) { .duo { grid-template-columns: 1fr 1fr; } .trio { grid-template-columns: 1fr 1fr 1fr; } }
+.who {
+  min-width: 0;
+  background: var(--panel);
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  padding: 1.1rem 1.15rem 1rem;
+  display: grid; gap: .55rem; align-content: start;
+}
+.who .tag { font-family: var(--sans); font-size: .78rem; font-weight: 600; letter-spacing: .1em; text-transform: uppercase; }
+.who.k .tag, .who.k h4 { color: var(--knowledge-ink); }
+.who.h .tag, .who.h h4 { color: var(--hybrid); }
+.who.c .tag, .who.c h4 { color: var(--compute-ink); }
+.who h4 { margin: 0; font-size: 1.35rem; font-weight: 500; line-height: 1.15; }
+.who p { margin: 0; font-size: .97rem; line-height: 1.55; color: var(--ink); }
+.who .facts { display: flex; flex-wrap: wrap; gap: .35rem .9rem; font-family: var(--mono); font-size: .74rem; color: var(--ink-2); padding-top: .55rem; border-top: 1px solid var(--rule); margin-top: .25rem; }
+.who .swatch { display: inline-block; width: .8rem; height: .8rem; border-radius: 50%; vertical-align: -.08rem; margin-right: .35rem; }
+.who.k .swatch { background: var(--knowledge); }
+.who.h .swatch { background: var(--hybrid); }
+.who.c .swatch { background: var(--compute); }
+
+details.code { margin-block: .5rem 1.5rem; }
+details.code > summary {
+  cursor: pointer; list-style: none;
+  font-family: var(--sans); font-size: .92rem; font-weight: 500; color: var(--ink-2);
+  display: inline-flex; align-items: center; gap: .45rem;
+  padding: .35rem 0;
+}
+details.code > summary::-webkit-details-marker { display: none; }
+details.code > summary::before { content: "+"; font-family: var(--mono); width: 1rem; color: var(--ink-3); }
+details.code[open] > summary::before { content: "\2212"; }
+.codegrid { display: grid; gap: 1rem; margin-top: .8rem; }
+@media (min-width: 60rem) { .codegrid { grid-template-columns: 1fr 1fr; } }
+.codebox { min-width: 0; background: var(--panel); border: 1px solid var(--rule); border-radius: 4px; }
+.codebox header { display: flex; justify-content: space-between; gap: 1rem; padding: .6rem .8rem; border-bottom: 1px solid var(--rule); font-family: var(--sans); font-size: .85rem; }
+.codebox header b { font-weight: 600; }
+.codebox pre {
+  margin: 0; padding: .8rem .9rem; max-height: 26rem; overflow: auto;
+  font-family: var(--mono); font-size: .72rem; line-height: 1.55; color: var(--ink-2);
+  tab-size: 2;
+}
+.codebox .cm { color: var(--knowledge-ink); }
+.codebox.c .cm { color: var(--ink-3); }
+.codebox .kw { color: var(--ink); font-weight: 500; }
+.codebox .n { color: var(--compute-ink); }
+
+/* ---------------------------------------------------------------- instruments */
+.bench {
+  background: var(--bench);
+  border-block: 1px solid var(--rule);
+  margin-inline: -16px;
+  padding: 1.1rem 16px 1.3rem;
+  margin-block: 2rem 2.6rem;
+}
+@media (min-width: 40rem) { .bench { margin-inline: -28px; padding-inline: 28px; } }
+@media (min-width: 80rem) { .bench { margin-inline: auto; max-width: calc(var(--wide) + 4rem); border: 1px solid var(--rule); border-radius: 6px; padding: 1.4rem 2rem 1.6rem; } }
+.inst-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: .4rem 1rem; margin-bottom: .9rem; }
+.inst-head h3 { margin: 0; font-family: var(--sans); font-size: 1.05rem; font-weight: 600; letter-spacing: .01em; }
+.inst-head .label { margin-right: auto; }
+.status { font-family: var(--mono); font-size: .76rem; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.inst-body { display: grid; gap: 1rem; }
+.panel { background: var(--panel); border: 1px solid var(--rule); border-radius: 4px; min-width: 0; }
+.panel.pad { padding: .9rem 1rem; }
+.controls { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; }
+button, .btn {
+  font-family: var(--sans); font-size: .92rem; font-weight: 500;
+  border: 1px solid var(--rule); background: var(--panel); color: var(--ink);
+  border-radius: 3px; padding: .5rem .85rem; cursor: pointer;
+  min-height: 2.5rem;
+  transition: background-color .15s ease, border-color .15s ease;
+}
+button:hover:not(:disabled) { border-color: var(--ink-3); }
+button:disabled { opacity: .45; cursor: default; }
+button.primary { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+button.primary:hover:not(:disabled) { background: var(--ink-2); border-color: var(--ink-2); }
+.readouts { display: flex; flex-wrap: wrap; gap: .4rem 1.6rem; font-family: var(--mono); font-size: .78rem; color: var(--ink-2); }
+.readouts b { color: var(--ink); font-weight: 500; }
+.result { font-size: 1.02rem; line-height: 1.55; padding: .2rem 0 0; }
+.result:empty { display: none; }
+.key { display: flex; flex-wrap: wrap; gap: .3rem 1.2rem; font-family: var(--sans); font-size: .85rem; color: var(--ink-2); }
+.key span { display: inline-flex; align-items: center; gap: .4rem; }
+.key i { display: inline-block; width: 1.1rem; height: 3px; border-radius: 2px; }
+
+/* tournament */
+.tour { display: grid; gap: 1rem; }
+@media (min-width: 62rem) { .tour { grid-template-columns: minmax(0, 1fr) 15.5rem; } }
+.boards { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .5rem; align-content: start; }
+@media (min-width: 62rem) { .boards { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.mini { background: var(--panel); border: 1px solid var(--rule); border-radius: 3px; padding: .35rem .35rem .3rem; }
+.mini canvas { aspect-ratio: 7 / 6; height: auto; }
+.mini .cap { font-family: var(--mono); font-size: .64rem; color: var(--ink-3); margin-top: .25rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* play */
+.play { display: grid; gap: 1rem; }
+@media (min-width: 56rem) { .play { grid-template-columns: minmax(0, 1fr) 20rem; align-items: start; } }
+.boardwrap { max-width: 34rem; width: 100%; margin-inline: auto; }
+.boardwrap canvas { aspect-ratio: 7 / 6.9; height: auto; cursor: pointer; }
+.ladder { display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 3px; }
+.rung { font-family: var(--mono); font-size: .66rem; text-align: center; padding: .35rem 0 .3rem; border-radius: 2px; background: var(--panel); border: 1px solid var(--rule); color: var(--ink-3); line-height: 1.25; }
+.rung b { display: block; font-size: .8rem; color: var(--ink-2); font-weight: 500; }
+.rung.now { border-color: var(--compute); color: var(--ink); box-shadow: inset 0 0 0 1px var(--compute); }
+.rung.won { background: color-mix(in srgb, var(--knowledge) 18%, var(--panel)); }
+.rung.lost { background: color-mix(in srgb, var(--compute) 16%, var(--panel)); }
+.say { font-size: 1.05rem; line-height: 1.5; min-height: 3em; }
+.say small { display: block; font-family: var(--mono); font-size: .74rem; color: var(--ink-3); margin-top: .3rem; }
+
+/* learning */
+.race { display: grid; gap: 1rem; }
+@media (min-width: 62rem) { .race { grid-template-columns: minmax(0, 1fr) 16rem; } }
+.filters { display: grid; gap: .9rem; align-content: start; }
+.filters .row { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; }
+.filters canvas { aspect-ratio: 1; height: auto; image-rendering: pixelated; border-radius: 2px; }
+.filters .lab { font-family: var(--sans); font-size: .8rem; color: var(--ink-2); line-height: 1.35; margin-bottom: .35rem; }
+
+.drawlab { display: grid; gap: 1rem; }
+@media (min-width: 56rem) { .drawlab { grid-template-columns: 17rem minmax(0, 1fr); align-items: start; } }
+.drawpad { position: relative; width: 100%; max-width: 17rem; margin-inline: auto; }
+.drawpad canvas { aspect-ratio: 1; height: auto; border-radius: 4px; background: #05070a; touch-action: none; cursor: crosshair; }
+.drawpad .hint { position: absolute; inset: 0; display: grid; place-items: center; color: #8790a0; font-family: var(--sans); font-size: .95rem; pointer-events: none; }
+.verdicts { display: grid; gap: .6rem; }
+@media (min-width: 40rem) { .verdicts { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+.verdict { padding: .8rem .85rem; display: grid; gap: .35rem; align-content: start; }
+.verdict .tag { font-family: var(--sans); font-size: .74rem; font-weight: 600; letter-spacing: .1em; text-transform: uppercase; }
+.verdict.k .tag { color: var(--knowledge-ink); }
+.verdict.h .tag { color: var(--hybrid); }
+.verdict.c .tag { color: var(--compute-ink); }
+.verdict .big { font-family: var(--mono); font-size: 2.6rem; line-height: 1; font-weight: 500; }
+.verdict .big.empty { color: var(--ink-3); }
+.verdict .why { font-family: var(--mono); font-size: .72rem; line-height: 1.5; color: var(--ink-2); }
+.verdict .why div::before { content: "\2192  "; color: var(--ink-3); }
+.bars { display: grid; grid-template-columns: repeat(10, minmax(0, 1fr)); gap: 2px; align-items: end; height: 2.6rem; }
+.bars i { display: block; background: var(--compute); border-radius: 1px 1px 0 0; min-height: 1px; }
+.verdict.h .bars i { background: var(--hybrid); }
+.bars-x { display: grid; grid-template-columns: repeat(10, minmax(0, 1fr)); gap: 2px; font-family: var(--mono); font-size: .62rem; color: var(--ink-3); text-align: center; }
+
+/* generality */
+.variants { display: grid; gap: .6rem; }
+.variant { display: grid; grid-template-columns: minmax(0, 1fr); gap: .5rem; padding: .8rem .9rem; }
+@media (min-width: 46rem) { .variant { grid-template-columns: 15rem minmax(0, 1fr) 7.5rem; align-items: center; } }
+.variant .name { font-family: var(--sans); font-weight: 600; font-size: .98rem; }
+.variant .desc { font-size: .88rem; color: var(--ink-2); line-height: 1.4; }
+.variant .scorebar { position: relative; height: 1.6rem; border-radius: 2px; overflow: hidden; background: var(--hole); display: flex; }
+.variant .scorebar .s { background: var(--compute); height: 100%; transition: width .5s ease; }
+.variant .scorebar .e { background: var(--knowledge); height: 100%; margin-left: auto; transition: width .5s ease; }
+.variant .scorebar .mid { position: absolute; left: 50%; top: 0; bottom: 0; width: 1px; background: var(--panel); opacity: .9; }
+.variant .scoretxt { font-family: var(--mono); font-size: .76rem; color: var(--ink-2); text-align: right; display: grid; gap: .35rem; }
+.variant .bars2 { display: grid; gap: .35rem; }
+.variant .boostlab { font-family: var(--sans); font-size: .78rem; color: var(--ink-2); }
+.variant .na { font-family: var(--sans); font-size: .85rem; color: var(--ink-3); font-style: italic; }
+.inventor { display: grid; gap: 1rem; }
+@media (min-width: 56rem) { .inventor { grid-template-columns: 17rem minmax(0, 1fr); align-items: start; } }
+.knobs { display: grid; gap: .65rem; }
+.knob { display: grid; grid-template-columns: 6.5rem minmax(0, 1fr) 2rem; align-items: center; gap: .6rem; font-family: var(--sans); font-size: .9rem; }
+.knob output { font-family: var(--mono); font-size: .85rem; text-align: right; }
+.knob input[type="range"] { width: 100%; accent-color: var(--compute); }
+.toggle { display: flex; align-items: center; gap: .55rem; font-family: var(--sans); font-size: .9rem; cursor: pointer; }
+.toggle input { width: 1.1rem; height: 1.1rem; accent-color: var(--compute); }
+
+/* scale */
+.ruler { display: grid; gap: .25rem; font-family: var(--mono); font-size: .78rem; color: var(--ink-2); }
+
+/* epilogue */
+.multiples { display: grid; gap: 1rem; }
+@media (min-width: 46rem) { .multiples { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+.multiple { padding: .8rem .8rem .7rem; }
+.multiple .chart { aspect-ratio: 4 / 3; }
+.multiple h4 { margin: 0 0 .15rem; font-family: var(--sans); font-size: .95rem; font-weight: 600; }
+.multiple p { font-family: var(--sans); font-size: .82rem; color: var(--ink-2); margin: .5rem 0 0; line-height: 1.4; }
+.finale { padding-block: 3rem 2rem; }
+.finale blockquote { font-size: clamp(1.4rem, 3.4vw, 2.05rem); line-height: 1.35; font-style: normal; margin: 0 0 1rem; }
+.finale blockquote em { color: var(--compute-ink); }
+
+.methods { font-family: var(--sans); font-size: .92rem; line-height: 1.55; color: var(--ink-2); }
+.methods h3 { font-family: var(--sans); font-size: 1rem; font-weight: 600; color: var(--ink); margin: 1.6rem 0 .4rem; }
+.methods p { margin-bottom: .7em; }
+.methods ul { padding-left: 1.1rem; margin: 0 0 .8rem; }
+.methods li { margin-bottom: .3rem; }
+footer.colophon { border-top: 1px solid var(--rule); margin-top: 3rem; padding-block: 1.5rem 3rem; font-family: var(--sans); font-size: .85rem; color: var(--ink-3); }
+
+.noscript { background: var(--panel); border: 1px solid var(--rule); padding: 1rem; border-radius: 4px; }
+@media (prefers-reduced-motion: reduce) {
+  * { animation: none !important; transition: none !important; }
+}
+</style>
+</head>
+<body>
+<header class="topbar">
+  <div class="topbar-in">
+    <a class="brand" href="#top">The Bitter Lesson</a>
+    <nav aria-label="Chapters">
+      <a href="#search">I. Search</a>
+      <a href="#learning">II. Learning</a>
+      <a href="#generality">III. Generality</a>
+      <a href="#scale">IV. Scale</a>
+      <a href="#shape">One shape</a>
+    </nav>
+    <div class="meter" id="meter" title="Work this page has done on your device">
+      <span class="dot" aria-hidden="true"></span>
+      <span><span class="num" id="m-pos">0</span> positions imagined</span>
+      <span class="flopwrap"><span class="sep">·</span> <span class="num" id="m-flop">0</span> FLOP learned</span>
+    </div>
+  </div>
+</header>
+
+<main class="page" id="top">
+
+<!-- =============================================================== HERO -->
+<header class="hero wide">
+  <p class="label eyebrow">Rich Sutton, 2019 · re-run live on this device</p>
+  <h1>The <span class="bitter">Bitter</span> Lesson</h1>
+  <p class="lede"><span class="q">“</span>The biggest lesson that can be read from 70 years of AI research is that general methods that leverage computation are ultimately the most effective, and by a large margin.<span class="q">”</span></p>
+  <div class="sub">
+    <p>That is the opening line of Rich Sutton's short essay. It is easy to agree with. This page tries to make you feel it. Every result below is produced while you read, by the device you are reading on: games are played, networks are trained, and mistakes are counted. Nothing is pre-recorded.</p>
+  </div>
+  <figure class="figure" id="hero-fig">
+    <div class="chart ratio-hero" id="hero-chart"><canvas aria-label="Training compute of notable AI systems from 1950 to 2026, on a logarithmic scale"></canvas></div>
+    <figcaption class="figcap"><strong>Seventy-six years of AI on one axis.</strong> Each dot is a notable AI system, placed by the computation used to train it. Every gridline up is ten times more. The span from bottom left to top right is about 25 orders of magnitude. Data: Epoch AI.</figcaption>
+  </figure>
+</header>
+
+<!-- =============================================================== PROLOGUE -->
+<section class="col" id="pattern">
+  <p>Why would computation win? Sutton gives one reason: its price keeps collapsing. A billion floating-point operations per second cost about $18.7 billion of hardware in 1961 and about a cent in 2025. Over any stretch longer than a research project, far more computation shows up than anyone planned for. A method that turns extra computation into better results rides that curve. A method built from what its authors know does not, because knowledge doesn't get cheaper every year.</p>
+  <p>Sutton noticed the same four-step story repeating through AI's history:</p>
+  <ol class="pattern">
+    <li>AI researchers have often tried to build knowledge into their agents,</li>
+    <li>this always helps in the short term, and is personally satisfying to the researcher, but</li>
+    <li>in the long run it plateaus and even inhibits further progress, and</li>
+    <li>breakthrough progress eventually arrives by an opposing approach based on scaling computation by search and learning.</li>
+  </ol>
+  <figure class="sketch" aria-label="Sketch of the pattern: a knowledge-based method starts ahead and levels off; a computation-based method starts behind and overtakes it.">
+    <svg viewBox="0 0 640 230" role="img">
+      <title>The shape to watch for</title>
+      <line x1="40" y1="200" x2="620" y2="200" stroke="var(--rule)" stroke-width="1"/>
+      <line x1="40" y1="20" x2="40" y2="200" stroke="var(--rule)" stroke-width="1"/>
+      <path d="M40 150 C 110 70, 170 62, 260 60 S 520 58, 620 57" fill="none" stroke="var(--knowledge)" stroke-width="3"/>
+      <path d="M40 196 C 200 194, 290 160, 360 108 S 520 30, 620 22" fill="none" stroke="var(--compute)" stroke-width="3"/>
+      <circle cx="450" cy="58.6" r="6" fill="none" stroke="var(--ink)" stroke-width="1.5"/>
+      <text x="458" y="44" fill="var(--ink-2)" font-family="IBM Plex Sans Condensed, Arial Narrow, sans-serif" font-size="14">the crossover</text>
+      <text x="74" y="56" fill="var(--knowledge-ink)" font-family="IBM Plex Sans Condensed, Arial Narrow, sans-serif" font-size="14">built from human knowledge</text>
+      <text x="236" y="186" fill="var(--compute-ink)" font-family="IBM Plex Sans Condensed, Arial Narrow, sans-serif" font-size="14">general method, more computation</text>
+      <text x="620" y="220" text-anchor="end" fill="var(--ink-3)" font-family="IBM Plex Sans Condensed, Arial Narrow, sans-serif" font-size="13">computation →</text>
+      <text x="30" y="24" text-anchor="end" fill="var(--ink-3)" font-family="IBM Plex Sans Condensed, Arial Narrow, sans-serif" font-size="13" transform="rotate(-90 30 24)">how good ↑</text>
+    </svg>
+    <figcaption class="figcap"><strong>A sketch, not data.</strong> The data starts below. Watch for the moment the lines cross.</figcaption>
+  </figure>
+  <p>What follows are three small re-enactments of that history, each run from scratch on your device. In each one a program built from human knowledge meets a general method that knows almost nothing but can put more computation to use.</p>
+</section>
+
+<!-- =============================================================== I. SEARCH -->
+<section class="chapter" id="search">
+  <div class="col">
+    <div class="chapter-head">
+      <span class="numeral">I · Search</span>
+      <h2>The Expert and the Searcher</h2>
+    </div>
+    <p>In May 1997 IBM's Deep Blue beat the world chess champion, Garry Kasparov. It still carried about 8,000 hand-tuned features of chess knowledge, but what won was search: on average it examined some 126 million positions a second. Many researchers had hoped that an understanding of how people play would win instead. John McCarthy called the result a measure of “our limited understanding of the principles of artificial intelligence.” Go repeated the story twenty years later. Then AlphaZero learned chess, shogi and Go starting from nothing but the rules.</p>
+    <p>Our chessboard is Connect Four: small enough to run on a phone, deep enough that whole books have been written about it. Meet the two players.</p>
+  </div>
+  <div class="wide">
+    <div class="duo">
+      <article class="who k">
+        <span class="tag"><span class="swatch"></span>Knowledge</span>
+        <h4>The Expert</h4>
+        <p>Built from human Connect Four strategy. Win if you can; block if you must. Never play directly under your opponent's winning square. Make two threats at once. Prefer the centre, where more lines run. If you move first, aim for threats on odd rows; if second, on even rows (Victor Allis's odd/even rule, from the 1988 thesis that solved the game). Looks two moves ahead.</p>
+        <div class="facts"><span>11 hand-tuned weights</span><span>2-move lookahead</span><span>same effort every move</span></div>
+      </article>
+      <article class="who c">
+        <span class="tag"><span class="swatch"></span>Computation</span>
+        <h4>The Searcher</h4>
+        <p>Knows the rules and nothing else. Before each move it plays out imaginary games at random from the current position, thousands of them, and steers toward the moves that win more of them. This is Monte Carlo tree search, introduced in 2006 by Rémi Coulom and by Levente Kocsis and Csaba Szepesvári. Give it more imagined games and it plays better.</p>
+        <div class="facts"><span>1 tuning constant</span><span>no strategy at all</span><span>effort set by a dial</span></div>
+      </article>
+    </div>
+    <details class="code" id="code-details">
+      <summary>Read both programs, exactly as they run on this page</summary>
+      <div class="codegrid">
+        <div class="codebox k"><header><b class="k">The Expert</b><span class="mono" id="code-k-n"></span></header><pre id="code-k"></pre></div>
+        <div class="codebox c"><header><b class="c">The Searcher</b><span class="mono" id="code-c-n"></span></header><pre id="code-c"></pre></div>
+      </div>
+    </details>
+  </div>
+
+  <div class="bench" id="tour">
+    <div class="wide">
+      <div class="inst-head">
+        <span class="label">Experiment 1</span>
+        <h3>The tournament</h3>
+        <span class="status" id="tour-status">waiting</span>
+      </div>
+      <div class="tour">
+        <div class="panel">
+          <div class="chart ratio-wide" id="tour-chart"><canvas aria-label="Tournament results: the Searcher's score against the Expert as its computation grows"></canvas></div>
+        </div>
+        <div class="boards" id="tour-boards"></div>
+      </div>
+      <div class="inst-body" style="margin-top:1rem">
+        <div class="controls">
+          <button class="primary" id="tour-run">Start the tournament</button>
+          <button id="tour-more" hidden>Play another round</button>
+          <div class="key" style="margin-left:auto">
+            <span><i style="background:var(--knowledge)"></i>Expert's score</span>
+            <span><i style="background:var(--compute)"></i>Searcher's score</span>
+          </div>
+        </div>
+        <div class="readouts" id="tour-readouts"></div>
+        <p class="result" id="tour-result"></p>
+      </div>
+    </div>
+  </div>
+
+  <div class="col">
+    <p>At each level of the tournament the Searcher gets four times as many imagined games per move as before and plays 32 games against the Expert, half of them moving first. Openings are randomised, two moves deep, and each opening is played once from each side. The Expert never changes. It can't: there is no dial on knowledge.</p>
+    <p>Look at what the Searcher never learns. Nobody tells it the centre matters, or that threats on odd rows are worth more, or that you shouldn't play under your opponent's threat. It works out what it needs, again, before every single move, by sheer volume of imagination. That is exactly what disappointed the chess researchers of 1997. “Brute force” may have won, they said, but it was not a general strategy, and anyway it was not how people played chess.</p>
+    <h3>Your turn</h3>
+    <p>You know some Connect Four too. Play the Searcher. You go first, which in this game is a real advantage. Every time you win, it gets four times more imagination per move.</p>
+  </div>
+
+  <div class="bench" id="play">
+    <div class="wide">
+      <div class="inst-head">
+        <span class="label">Experiment 2</span>
+        <h3>You against the Searcher</h3>
+        <span class="status" id="play-status"></span>
+      </div>
+      <div class="play">
+        <div class="panel pad">
+          <div class="boardwrap"><canvas id="play-board" aria-label="Connect Four board. Use the number keys 1 to 7 or tap a column to drop your piece."></canvas></div>
+        </div>
+        <div class="inst-body">
+          <div class="panel pad">
+            <div class="label" style="margin-bottom:.5rem">Imagined games per move</div>
+            <div class="ladder" id="play-ladder"></div>
+          </div>
+          <div class="panel pad">
+            <div class="say" id="play-say" aria-live="polite">Drop a piece to begin. Tap a column, or press 1 to 7.</div>
+          </div>
+          <div class="controls">
+            <button id="play-new">New game</button>
+            <button id="play-down">Easier</button>
+            <button id="play-up">Harder</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- =============================================================== II. LEARNING -->
+<section class="chapter" id="learning">
+  <div class="col">
+    <div class="chapter-head">
+      <span class="numeral">II · Learning</span>
+      <h2>Three ways to read a digit</h2>
+    </div>
+    <p>Search is one way to spend computation. Learning is the other.</p>
+    <p>Speech recognition went through the lesson in the 1970s. In DARPA's speech-understanding program, Carnegie Mellon's Harpy, a precompiled network of word sounds searched with brute force, met the program's goals. Hearsay-II, an elegant “blackboard” of cooperating knowledge sources, did not. Statistical models such as hidden Markov models took over the field in the following decade. Fred Jelinek, who ran IBM's speech group, recalled a remark of his from 1988: “Whenever I fire a linguist our system performance improves.”</p>
+    <p>Vision followed. For decades researchers designed edge detectors and features by hand, with names like SIFT and HOG. In 2012 a learned network, AlexNet, won the ImageNet challenge with a 15.3% top-5 error rate; the runner-up, built on hand-designed features, had 26.2%. “Today all this is discarded,” Sutton wrote.</p>
+    <p>Here are three programs that read handwritten digits, one from each era.</p>
+  </div>
+  <div class="wide">
+    <div class="duo trio">
+      <article class="who k">
+        <span class="tag"><span class="swatch"></span>Knowledge</span>
+        <h4>The Rulebook</h4>
+        <p>Rules written by hand, the way you might explain digits to a child: an 8 is two loops stacked up; a 6 has one loop, low down, and a stroke rising from it. It thins each digit to a skeleton, finds the loops, stroke ends and junctions, and applies its rules. It never trains.</p>
+        <div class="facts"><span id="rb-rules">hand-written rules</span><span>0 FLOP of training</span></div>
+      </article>
+      <article class="who h">
+        <span class="tag"><span class="swatch"></span>Knowledge + learning</span>
+        <h4>The Feature Engineer</h4>
+        <p>Human-designed features with a learned decision on top. Each image is summarised as histograms of edge directions in small cells, the HOG features of Dalal and Triggs (2005), a design distilled from decades of vision research. A linear classifier learns which histograms mean which digit.</p>
+        <div class="facts"><span>1,296 designed features</span><span>12,970 learned weights</span></div>
+      </article>
+      <article class="who c">
+        <span class="tag"><span class="swatch"></span>Computation</span>
+        <h4>The Learner</h4>
+        <p>A small convolutional network. It starts as about 6,000 random numbers and is told only that nearby pixels belong together. Everything else, including what an edge is, it has to learn from examples, one gradient step at a time.</p>
+        <div class="facts"><span id="cnn-params">6,000 learned weights</span><span>no features given</span></div>
+      </article>
+    </div>
+  </div>
+
+  <div class="bench" id="race">
+    <div class="wide">
+      <div class="inst-head">
+        <span class="label">Experiment 3</span>
+        <h3>The training race</h3>
+        <span class="status" id="race-status">waiting</span>
+      </div>
+      <div class="race">
+        <div class="panel">
+          <div class="chart ratio-wide" id="race-chart"><canvas aria-label="Mistakes on 2,000 unseen digits against training computation, for the three programs"></canvas></div>
+        </div>
+        <div class="panel pad filters">
+          <div>
+            <div class="lab"><b>Designed by people.</b> The edge filters behind the Feature Engineer's features: horizontal and vertical change.</div>
+            <div class="row" id="filters-human"></div>
+          </div>
+          <div>
+            <div class="lab"><b>Grown from noise.</b> The Learner's eight first-layer filters, live. They start random.</div>
+            <div class="row" id="filters-learned"></div>
+          </div>
+          <div class="lab" id="filters-note" style="color:var(--ink-3)"></div>
+        </div>
+      </div>
+      <div class="inst-body" style="margin-top:1rem">
+        <div class="controls">
+          <button class="primary" id="race-run">Start training</button>
+          <div class="key" style="margin-left:auto">
+            <span><i style="background:var(--knowledge)"></i>Rulebook</span>
+            <span><i style="background:var(--hybrid)"></i>Feature Engineer</span>
+            <span><i style="background:var(--compute)"></i>Learner</span>
+          </div>
+        </div>
+        <div class="readouts" id="race-readouts"></div>
+        <p class="result" id="race-result"></p>
+      </div>
+    </div>
+  </div>
+
+  <div class="col">
+    <p>All three see the same 12,000 handwritten digits from the MNIST collection and are graded on 2,000 others they never see during training. The horizontal axis counts the floating-point operations each one spends learning. The Rulebook spends none, so it is a flat line: its knowledge arrived complete.</p>
+    <p id="diary-intro">The Rulebook was written for this page by an AI model, working the way researchers did in the 1970s: look at the digits it gets wrong, write a better rule, test again. Being a machine, it worked fast, and it logged every revision. Here is the diary. Hover over or tap a point to read what changed.</p>
+    <figure class="figure" id="diary-fig">
+      <div class="panel"><div class="chart ratio-diary" id="diary-chart"><canvas aria-label="The Rulebook's accuracy after each revision"></canvas></div></div>
+      <figcaption class="figcap" id="diary-cap"><strong>Knowledge engineering, measured.</strong> Accuracy of the Rulebook after each revision, on development digits.</figcaption>
+    </figure>
+    <p id="diary-after">Each new rule fixed a dozen digits and broke a few others, and the curve went flat. Speed was never the problem: the flat part came after the AI had tried everything it could think of. The problem is the method. Every rule is a guess about how people recognise digits, and handwriting is more varied than any list of guesses.</p>
+    <h3>Draw a digit</h3>
+    <p>Draw any digit and all three programs will read it. The Rulebook shows its reasoning, and the skeleton it reasons about. The Learner reads with whatever it has learned so far, so if training hasn't started, it is guessing.</p>
+  </div>
+
+  <div class="bench" id="draw">
+    <div class="wide">
+      <div class="inst-head">
+        <span class="label">Experiment 4</span>
+        <h3>Your handwriting</h3>
+        <span class="status" id="draw-status"></span>
+      </div>
+      <div class="drawlab">
+        <div class="inst-body">
+          <div class="drawpad"><canvas id="draw-pad" aria-label="Drawing pad. Draw a digit with your finger or mouse."></canvas><div class="hint" id="draw-hint">draw a digit here</div></div>
+          <div class="controls" style="justify-content:center">
+            <button id="draw-clear">Clear</button>
+            <button id="draw-sample">Show me a test digit</button>
+          </div>
+        </div>
+        <div class="verdicts">
+          <div class="panel verdict k"><span class="tag">Rulebook</span><div class="big" id="v-rb">–</div><div class="why" id="v-rb-why">Waiting for a digit.</div></div>
+          <div class="panel verdict h"><span class="tag">Feature Engineer</span><div class="big" id="v-fe">–</div><div class="bars" id="v-fe-bars"></div><div class="bars-x" aria-hidden="true"><span>0</span><span>1</span><span>2</span><span>3</span><span>4</span><span>5</span><span>6</span><span>7</span><span>8</span><span>9</span></div><div class="why" id="v-fe-why"></div></div>
+          <div class="panel verdict c"><span class="tag">Learner</span><div class="big" id="v-cnn">–</div><div class="bars" id="v-cnn-bars"></div><div class="bars-x" aria-hidden="true"><span>0</span><span>1</span><span>2</span><span>3</span><span>4</span><span>5</span><span>6</span><span>7</span><span>8</span><span>9</span></div><div class="why" id="v-cnn-why"></div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- =============================================================== III. GENERALITY -->
+<section class="chapter" id="generality">
+  <div class="col">
+    <div class="chapter-head">
+      <span class="numeral">III · Generality</span>
+      <h2>Change the rules</h2>
+    </div>
+    <p>Sutton's second point is the deeper one:</p>
+    <blockquote>“The actual contents of minds are tremendously, irredeemably complex … They are not what should be built in, as their complexity is endless; instead we should build in only the meta-methods that can find and capture this arbitrary complexity.”<footer class="cite">Rich Sutton, The Bitter Lesson</footer></blockquote>
+    <p>Knowledge is always knowledge of a particular world. The Searcher's method is about any world that has rules. So let's change the world. Below, the Expert and the Searcher meet again under rules neither has seen. The Searcher thinks at the same budget for every variant. Its code doesn't change. The Expert's code still runs, but its knowledge was written for one game.</p>
+  </div>
+
+  <div class="bench" id="vary">
+    <div class="wide">
+      <div class="inst-head">
+        <span class="label">Experiment 5</span>
+        <h3>New worlds</h3>
+        <span class="status" id="vary-status">waiting</span>
+      </div>
+      <div class="variants" id="vary-list"></div>
+      <div class="inst-body" style="margin-top:1rem">
+        <div class="controls">
+          <button class="primary" id="vary-run">Play all the matches</button>
+          <div class="key" style="margin-left:auto">
+            <span><i style="background:var(--compute)"></i>Searcher's share</span>
+            <span><i style="background:var(--knowledge)"></i>Expert's share</span>
+          </div>
+        </div>
+        <p class="result" id="vary-result"></p>
+      </div>
+    </div>
+  </div>
+
+  <div class="col">
+    <p>Not every change breaks the Expert. Some of its knowledge is general: counting your open lines is a decent idea in any game of this family. But someone has to check, rule by rule, and rewrite what no longer holds. In misère, where four in a row loses, every piece of its wisdom points the wrong way. Without gravity it can't even move, because its code assumes pieces fall. The Searcher needed only to be told the rules.</p>
+    <h3>Invent a game</h3>
+    <p>Make up your own rules. The Searcher has never seen your game and has no strategy for it, yet it will play it well from its first move, because it works out strategy from the rules at the moment it needs it.</p>
+  </div>
+
+  <div class="bench" id="invent">
+    <div class="wide">
+      <div class="inst-head">
+        <span class="label">Experiment 6</span>
+        <h3>Your rules</h3>
+        <span class="status" id="inv-status"></span>
+      </div>
+      <div class="inventor">
+        <div class="panel pad knobs">
+          <label class="knob" for="inv-w">Columns <input type="range" id="inv-w" min="4" max="10" value="8"><output id="inv-w-o">8</output></label>
+          <label class="knob" for="inv-h">Rows <input type="range" id="inv-h" min="4" max="9" value="7"><output id="inv-h-o">7</output></label>
+          <label class="knob" for="inv-k">In a row <input type="range" id="inv-k" min="3" max="6" value="4"><output id="inv-k-o">4</output></label>
+          <label class="toggle" for="inv-gravity"><input type="checkbox" id="inv-gravity" checked> Pieces fall (gravity)</label>
+          <label class="toggle" for="inv-misere"><input type="checkbox" id="inv-misere"> Making the line loses (misère)</label>
+          <label class="toggle" for="inv-wrap"><input type="checkbox" id="inv-wrap" checked> Board wraps around left to right</label>
+          <label class="knob" for="inv-sims">Imagination <input type="range" id="inv-sims" min="6" max="16" value="12"><output id="inv-sims-o">4k</output></label>
+          <div class="controls">
+            <button class="primary" id="inv-play">Play this game</button>
+            <button id="inv-first">Searcher moves first</button>
+          </div>
+        </div>
+        <div class="inst-body">
+          <div class="panel pad"><div class="boardwrap" id="inv-wrapbox"><canvas id="inv-board" aria-label="Board for your invented game"></canvas></div></div>
+          <div class="panel pad"><div class="say" id="inv-say" aria-live="polite">Set the rules, then press Play.</div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- =============================================================== IV. SCALE -->
+<section class="chapter" id="scale">
+  <div class="col">
+    <div class="chapter-head">
+      <span class="numeral">IV · Scale</span>
+      <h2>Where this page sits</h2>
+    </div>
+    <p>Everything above ran on one consumer device in a few minutes. That would have been unthinkable for most of the history on this chart. The markers labelled “this page” show the computation your device has spent here so far, placed against the training runs of the systems that made AI history.</p>
+  </div>
+  <div class="bench" id="scale-bench">
+    <div class="wide">
+      <div class="inst-head">
+        <span class="label">Data</span>
+        <h3>Training compute of notable AI systems</h3>
+        <span class="status" id="scale-status"></span>
+      </div>
+      <div class="panel"><div class="chart ratio-scale" id="scale-chart"><canvas aria-label="Training compute of notable AI systems over time, with this page's own computation marked"></canvas></div></div>
+      <p class="figcap" id="scale-trend">Each dot is a notable AI system. Hover or tap for details.</p>
+      <p class="result" id="scale-result"></p>
+    </div>
+  </div>
+  <div class="col">
+    <p>Not everyone bet on computation. In 1984 Doug Lenat began Cyc, a project to write down common sense by hand, one assertion at a time. Its 1985 plan estimated about 150 person-years. In 2023 Lenat and Gary Marcus put the effort at four decades, roughly 2,000 person-years and tens of millions of hand-authored assertions. Much of that common sense is now picked up from text by language models trained on the right of this chart.</p>
+    <p>Sutton doesn't think language models settle the matter either. They are “clearly a way of using massive computation,” he said in 2025, “but they're also a way of putting in lots of human knowledge,” namely everything people wrote. He expects systems that learn from their own experience to overtake them. The lesson, in other words, is still being learned.</p>
+  </div>
+</section>
+
+<!-- =============================================================== EPILOGUE -->
+<section class="chapter" id="shape">
+  <div class="col">
+    <div class="chapter-head">
+      <span class="numeral">Coda</span>
+      <h2>One shape</h2>
+    </div>
+    <p>Here are the experiments you ran, side by side. Different problems, different methods and different units, and the same shape each time: the program built from knowledge starts ahead and stays roughly where it is; the general method starts behind and keeps climbing as it gets more computation.</p>
+  </div>
+  <div class="wide">
+    <div class="multiples" id="multiples">
+      <div class="panel multiple" id="mult-tour"><h4>Search</h4><div class="chart"><canvas aria-label="Tournament summary"></canvas></div><p id="mult-tour-p">Run Experiment 1 to fill this in.</p></div>
+      <div class="panel multiple" id="mult-you"><h4>You</h4><div class="chart"><canvas aria-label="Your games against the Searcher"></canvas></div><p id="mult-you-p">Play Experiment 2 to fill this in.</p></div>
+      <div class="panel multiple" id="mult-race"><h4>Learning</h4><div class="chart"><canvas aria-label="Training race summary"></canvas></div><p id="mult-race-p">Run Experiment 3 to fill this in.</p></div>
+    </div>
+  </div>
+  <div class="col finale">
+    <blockquote>“We want AI agents that can <em>discover</em> like we can, not which contain what we have discovered. Building in our discoveries only makes it harder to see how the discovering process can be done.”</blockquote>
+    <p class="cite">Rich Sutton, <a href="http://www.incompleteideas.net/IncIdeas/BitterLesson.html">The Bitter Lesson</a>, March 13, 2019</p>
+    <p style="margin-top:2rem">The bitterness is in whose knowledge loses. The Expert's rules, the Rulebook's loops and the Feature Engineer's edges are good human insights, carefully written down, and they really do help at first. Then the clock runs, the computation arrives, and a method that knows less wins. Sutton calls it a success “tinged with bitterness, and often incompletely digested, because it is success over a favored, human-centric approach.”</p>
+    <p>This page was built overnight by an AI model, itself a product of the lesson. Nobody wrote its knowledge in. It wrote the Expert and the Rulebook by hand anyway, as a fair opponent, and then watched them lose.</p>
+  </div>
+
+  <div class="col methods" id="methods">
+    <h3>How the experiments work</h3>
+    <p><b>Tournament.</b> Connect Four, 7 columns by 6 rows. The Searcher is plain UCT Monte Carlo tree search with uniformly random playouts, an exploration constant of 0.5, and proofs of forced wins and losses propagated inside the tree (MCTS-Solver), which also uses nothing but the rules. Levels run from 1 to 65,536 imagined games per move in steps of four; slower devices stop at 16,384. Each level is 32 games over 16 random two-move openings, each opening played once with each side moving first. A win scores 1, a draw ½. Whiskers are 95% intervals. Results vary a little from run to run because the openings and the Searcher's imagination are random.</p>
+    <p><b>Training race.</b> 12,000 training and 2,000 test images, sampled at random (seed 1957) from the MNIST training and test sets. The Learner is a convolutional network (5×5 convolutions with 8 and then 16 filters, ReLU, 2×2 max-pooling, a linear output layer) trained with Adam at batch size 32, learning rate 0.003 with cosine decay, for 8 epochs, with its minibatch gradients computed in parallel across your device's cores. The Feature Engineer uses HOG features (4×4-pixel cells, 9 orientation bins, 2×2-cell blocks with L2-Hys normalisation, 1,296 numbers per image) and multinomial logistic regression trained the same way for 12 epochs. FLOP counts are analytic: a multiply-add counts as two operations, and the forward pass, backward pass and feature extraction are all counted. Evaluation is not. Neither program sees shifted or distorted copies of the data.</p>
+    <p><b>Rulebook.</b> Written by hand for this page, with no fitted parameters: thresholds were set by looking at development digits, which were drawn only from the training set.</p>
+    <p><b>New worlds.</b> Each variant is a 24-game match at 1,024 imagined games per move, over random two-move openings with sides swapped. If the Searcher scores under 50%, it plays another 24 games with four times the imagination.</p>
+    <p><b>Compute counts.</b> “Positions imagined” counts every piece placed in an imagined game, plus the Expert's moves. “FLOP learned” counts training operations in Experiment 3.</p>
+    <h3>Sources</h3>
+    <ul>
+      <li>Rich Sutton, <a href="http://www.incompleteideas.net/IncIdeas/BitterLesson.html">The Bitter Lesson</a> (2019). All quotations from the essay are verbatim.</li>
+      <li>Training compute data: <a href="https://epoch.ai/data/notable-ai-models">Epoch AI, Data on Notable AI Models</a> (CC BY 4.0), retrieved October 2026.</li>
+      <li>Deep Blue: Campbell, Hoane and Hsu, “Deep Blue”, <i>Artificial Intelligence</i> 134 (2002). McCarthy, “AI as Sport”, <i>Science</i>, June 6, 1997.</li>
+      <li>Speech: Klatt (1977) and Reddy on the ARPA program; Jelinek's recollection from his LREC 2004 talk.</li>
+      <li>ImageNet 2012 results: image-net.org. HOG: Dalal and Triggs, CVPR 2005.</li>
+      <li>Connect Four: Allis, <i>A Knowledge-Based Approach of Connect-Four</i> (1988). MCTS: Coulom (2006); Kocsis and Szepesvári (2006).</li>
+      <li>Cyc: Lenat et al. (1985); Lenat and Marcus (2023). Sutton on language models: Dwarkesh Podcast, September 2025.</li>
+      <li>Cost of computing: Wikipedia, “FLOPS”, cost-of-computing table (unadjusted dollars).</li>
+      <li>Handwritten digits: the MNIST database of LeCun, Cortes and Burges.</li>
+    </ul>
+  </div>
+  <footer class="col colophon">
+    <p>Set in IBM Plex, a typeface from the company that built Deep Blue. Source code: <a href="https://github.com/m1omg/BitterLesson">github.com/m1omg/BitterLesson</a>.</p>
+  </footer>
+</section>
+
+</main>
+<noscript><div class="col noscript">This page runs its experiments in JavaScript. Turn JavaScript on to see them.</div></noscript>
+<script src="assets/js/connect.js"></script>
+<script src="assets/js/digits.js"></script>
+<script src="assets/js/rulebook.js"></script>
+<script src="assets/js/tasks.js"></script>
+<script src="assets/js/app.js"></script>
+</body>
+</html>
