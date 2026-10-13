@@ -985,6 +985,41 @@
       this.chart.pops.clear();
     },
     rate(L) { return L.n ? L.score / L.n : null; },
+    // Logistic fit of the Searcher's score against log2(imagined games), by
+    // maximum likelihood over every game played (a draw counts half). In Elo
+    // terms its slope is the average rating gained per doubling of compute.
+    fit() {
+      const L = this.levels.filter((q) => q.n > 0);
+      if (L.length < 4 || !L.some((q) => q.score > 0) || !L.some((q) => q.score < q.n)) return null;
+      const ll = (a, b) => {
+        let s = 0;
+        for (const q of L) {
+          const z = a + b * Math.log2(q.sims);
+          s += -q.score * Math.log1p(Math.exp(-z)) - (q.n - q.score) * Math.log1p(Math.exp(z));
+        }
+        return s;
+      };
+      let a = 0, b = 0, cur = ll(a, b);
+      for (let it = 0; it < 100; it++) {
+        let g0 = 0, g1 = 0, h00 = 0, h01 = 0, h11 = 0;
+        for (const q of L) {
+          const x = Math.log2(q.sims), p = 1 / (1 + Math.exp(-(a + b * x)));
+          const r = q.score - q.n * p, w = q.n * p * (1 - p);
+          g0 += r; g1 += r * x; h00 += w; h01 += w * x; h11 += w * x * x;
+        }
+        const det = h00 * h11 - h01 * h01;
+        if (!(det > 1e-12)) return null;
+        const da = (h11 * g0 - h01 * g1) / det, db = (h00 * g1 - h01 * g0) / det;
+        let step = 1, next = ll(a + da, b + db);
+        while (next < cur - 1e-12 && step > 1e-4) { step /= 2; next = ll(a + step * da, b + step * db); }
+        a += step * da; b += step * db;
+        const done = Math.abs(next - cur) < 1e-10;
+        cur = next;
+        if (done) break;
+      }
+      if (!(b > 0) || !isFinite(a)) return null;
+      return { a, b, eloPerDoubling: 400 * b / Math.LN10 };
+    },
     computeCrossover() {
       // first rise through 50%, interpolated on the log axis
       const pts = this.levels.map((L, i) => ({ i, p: this.rate(L), n: L.n, L })).filter((q) => q.n >= Math.min(8, q.L.planned || 8));
@@ -992,11 +1027,10 @@
         const a = pts[k], b = pts[k + 1];
         if (b.i !== a.i + 1) continue;
         if (a.p < 0.5 && b.p >= 0.5) {
-          const f = (0.5 - a.p) / (b.p - a.p);
-          const li = a.i + f;
-          const sims = Math.pow(4, li);
+          const t = (0.5 - a.p) / (b.p - a.p);
+          const sims = Math.pow(4, a.i + t);
           const msPerSim = (a.L.searchMoves ? a.L.searchMs / a.L.searchMoves / a.L.sims : 0) || 0;
-          return { li, sims, a, b, msPerMove: msPerSim * sims };
+          return { sims, msPerMove: msPerSim * sims };
         }
       }
       return null;
@@ -1021,16 +1055,15 @@
       this.crossover = x;
       const top = this.levels.filter((L) => L.n > 0).pop();
       if (!top) { el.textContent = ''; return; }
+      const plural = (n, w) => n + ' ' + w + (n === 1 ? '' : 's');
       const parts = [];
-      if (x) {
-        parts.push('The Searcher drew level with the Expert at about ' + fmtInt(sig2(x.sims)) + ' imagined games per move' + (x.msPerMove ? ', roughly ' + fmtTime(x.msPerMove) + ' of thinking per move on this device.' : '.'));
-      } else if (this.rate(top) < 0.5) {
-        parts.push('The Searcher has not caught the Expert yet.');
-      }
-      parts.push('At ' + fmtInt(top.sims) + ' it scored ' + pct(this.rate(top)) + ' (' + top.wins + ' wins, ' + top.draws + ' draws, ' + top.losses + ' losses).');
-      if (this.topLevel < LEVELS.length - 1 && !stopped) parts.push('Your device skipped the 65,536 level to save time.');
       const low = this.levels[0];
-      if (low.n) parts.push('With a single imagined game per move it scored ' + pct(this.rate(low)) + '.');
+      if (low.n) parts.push('With one imagined game per move, the Searcher scored ' + pct(this.rate(low)) + ' against the Expert.');
+      if (x) parts.push('It drew level at about ' + fmtInt(sig2(x.sims)) + ' imagined games per move' + (x.msPerMove ? ' (roughly ' + fmtTime(x.msPerMove) + ' of thinking per move on this device)' : '') + ', and at ' + fmtInt(top.sims) + ' it scored ' + pct(this.rate(top)) + ': ' + plural(top.wins, 'win') + ', ' + plural(top.draws, 'draw') + ', ' + plural(top.losses, 'loss').replace('losss', 'losses') + '.');
+      else parts.push((this.rate(top) < 0.5 ? 'It has not caught the Expert yet. ' : '') + 'At ' + fmtInt(top.sims) + ' it scored ' + pct(this.rate(top)) + '.');
+      const fit = this.fit();
+      if (fit && !stopped) parts.push('Averaged over the whole tournament, each doubling of its imagination was worth about ' + Math.round(fit.eloPerDoubling / 5) * 5 + ' Elo points.');
+      if (this.topLevel < LEVELS.length - 1 && !stopped) parts.push('Your device skipped the 65,536 level to save time.');
       el.textContent = parts.join(' ');
     },
     _drawChart(t) {
