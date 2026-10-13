@@ -8,9 +8,9 @@ This is an interactive essay that does not ask you to take that on faith. It re-
 
 | | Knowledge | Computation | What you watch |
 |---|---|---|---|
-| **I. Search** | **The Expert**: a page of hand-written Connect Four strategy (tactics, threat theory, Allis's odd/even rule), two moves of lookahead | **The Searcher**: plain Monte Carlo tree search with random playouts, knows only the rules | A 288-game tournament, 1 to 65,536 imagined games per move. The Expert wins everything at first; the Searcher overtakes it at about 500 imagined games per move and keeps climbing. |
+| **I. Search** | **The Expert**: a page of hand-written Connect Four strategy (tactics, threat theory, Allis's odd/even rule), two moves of lookahead | **The Searcher**: plain Monte Carlo tree search with random playouts, knows only the rules | A 288-game tournament, 1 to 65,536 imagined games per move. The Expert wins everything at first; the Searcher overtakes it at a few hundred to a thousand imagined games per move (it varies between runs) and keeps climbing. |
 | **You** | You | The Searcher | Play it yourself on an 8-level ladder; every win gives it 4× more compute. |
-| **II. Learning** | **The Rulebook**: 34 hand-written rules about loops, stroke ends and junctions (91% on MNIST) · **The Feature Engineer**: hand-designed HOG edge features + a learned linear classifier | **The Learner**: a small CNN that starts from random numbers | A training race measured in FLOP, graded on all 10,000 MNIST test digits. On a 4-core laptop the Learner passes the Rulebook after about 3 seconds of training and the hand-designed features after about 35. |
+| **II. Learning** | **The Rulebook**: 34 hand-written rules about loops, stroke ends and junctions (91% on MNIST) · **The Feature Engineer**: hand-designed HOG edge features + a learned linear classifier | **The Learner**: a small CNN that starts from random numbers | A training race measured in FLOP, graded on all 10,000 MNIST test digits. On a 4-core laptop the Learner passes the Rulebook after about a second of training and the hand-designed features after about 15. |
 | | | | The Rulebook's real development diary: 34 revisions, then a plateau. |
 | | | | Draw a digit; all three read it, the Rulebook explains itself. |
 | **III. Generality** | The same Expert, under rules it was not written for | The same Searcher, unchanged | Misère, cylinder, five-in-a-row, no gravity. Then invent your own game and play the Searcher at it. |
@@ -27,7 +27,7 @@ python3 -m http.server 8000
 
 Opening `index.html` straight from disk won't work in most browsers, because they block workers and data loading on `file://` pages.
 
-No build step and no dependencies. Heavy work runs in Web Workers (one per core, minus one). The training race splits each minibatch's gradient across cores, and computes it in WebAssembly SIMD (`wasm/cnn.c`, about 5× faster than the JavaScript reference in `digits.js`, which is the fallback). `tests/wasm-check.js` confirms the two agree.
+No build step and no dependencies. Heavy work runs in Web Workers (one per core, minus one). The big experiments take turns rather than share cores, and pause while the tab is hidden, so the times the page reports are its own. The training race splits each minibatch's gradient across cores, and computes it in WebAssembly SIMD (`wasm/cnn.c`, about 5× faster than the JavaScript reference in `digits.js`, which is the fallback). `tests/wasm-check.js` confirms the two agree.
 
 ## How honest is it?
 
@@ -37,7 +37,7 @@ The experiments are real, and the page shows its working. In brief:
 - The Expert was made as strong as reasonably possible. At 65,536 imagined games per move it still wins a few games, through deep endgame theory.
 - The Rulebook was written by an AI model, in the manner of 1970s structural pattern recognition, with no fitted parameters. It was tuned only on training digits; test digits were held out. Its diary is in `tests/rulebook-log.md`.
 - On digits, hand-designed HOG features are a strong baseline (2.3% error). The CNN beats them (about 1.6%), but not by the margins seen on ImageNet; the page says so.
-- On a bigger board (five in a row on 9×7) the Expert beats a Searcher limited to 1,024 imagined games per move. The page then gives the Searcher 4× more compute, and it wins.
+- On a bigger board (five in a row on 9×7) some of the Expert's knowledge carries over: a Searcher limited to 1,024 imagined games per move scores only about 44% against it, so it loses that match more often than not. When it does, the page gives the Searcher 4× more compute (twice, if needed) and plays the match again.
 - FLOP counts are analytic: a multiply-add counts as 2 operations, and forward pass, backward pass and feature extraction are all included.
 
 The full method notes are at the bottom of the page.

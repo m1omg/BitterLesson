@@ -308,15 +308,31 @@
 
   // ================================================================ workers
   // Same message interface as a Worker, but runs tasks on this thread in
-  // slices. Used only if real workers can't start.
+  // slices, with a task context of its own. Used only if real workers can't
+  // start.
   class LocalWorker {
-    constructor() { this.onmessage = null; this.local = true; }
+    constructor() {
+      this.onmessage = null; this.local = true; this.dead = false;
+      this.ctx = BL.tasks.context();
+      this.live = new Set();
+    }
     postMessage(msg) {
+      if (this.dead) return;
+      if (msg.id != null && msg.type !== 'cancel') this.live.add(msg.id);
       setTimeout(() => {
-        BL.tasks.handle(msg, (m) => { setTimeout(() => { if (this.onmessage) this.onmessage({ data: m }); }, 0); });
+        if (this.dead) return;
+        this.ctx.handle(msg, (m) => {
+          if (m.type === 'done' || m.type === 'error' || m.type === 'cancelled') this.live.delete(m.id);
+          setTimeout(() => { if (!this.dead && this.onmessage) this.onmessage({ data: m }); }, 0);
+        });
       }, 0);
     }
-    terminate() {}
+    terminate() { // stop for real: cancel whatever is still running here
+      if (this.dead) return;
+      this.dead = true;
+      for (const id of this.live) this.ctx.handle({ type: 'cancel', id }, () => {});
+      this.live.clear();
+    }
   }
   let workersBroken = false;
 
@@ -336,19 +352,41 @@
     return new Worker(WORKER_URL);
   }
 
+  // Job ids are unique across all pools, so a cancel can only ever reach the
+  // job it was meant for.
+  let nextJobId = 1;
+  // While the tab is hidden, pools start nothing new and pause what is
+  // running (searches and training wait at their next yield). The same
+  // switch lets one experiment hold another's cores: see `turns`.
+  const pools = new Set();
+
   class Pool {
     constructor(size) {
-      this.size = size;
+      // Without workers every job shares this thread; one at a time is best.
+      if (typeof Worker === 'undefined') workersBroken = true;
+      this.size = workersBroken ? 1 : size;
       this.workers = [];
       this.idle = [];
       this.queue = [];
       this.jobs = new Map();
-      this.nextId = 1;
-      for (let i = 0; i < size; i++) this._spawn(i);
+      this.held = false;
+      this.pausedSent = false;
+      for (let i = 0; i < this.size; i++) this._spawn(i);
+      pools.add(this);
+      this._sync();
     }
+    get paused() { return this.held || document.hidden; }
+    _sync() {
+      const p = this.paused;
+      if (p !== this.pausedSent) {
+        this.pausedSent = p;
+        for (const w of this.workers) w.postMessage({ type: p ? 'pause' : 'resume' });
+      }
+      if (!p) this._dispatch();
+    }
+    hold(on) { this.held = !!on; this._sync(); }
     _spawn(slot) {
       let w = null;
-      if (typeof Worker === 'undefined') workersBroken = true;
       if (!workersBroken) {
         try { w = makeWorker(); } catch (e) { w = null; workersBroken = true; }
       }
@@ -374,14 +412,14 @@
       lw.slot = w.slot; lw.ok = true;
       lw.onmessage = (e) => this._onMessage(lw, e.data);
       this.workers[w.slot] = lw;
+      if (this.pausedSent) lw.postMessage({ type: 'pause' });
       const i = this.idle.indexOf(w);
       if (i >= 0) this.idle[i] = lw;
       for (const job of this.jobs.values()) if (job.worker === w) { job.worker = lw; lw.postMessage(job.msg); }
-      for (const d of this.direct || []) if (d.worker === w) { d.worker = lw; lw.postMessage(d.msg); }
     }
     run(msg, onMsg, transfer) {
       return new Promise((resolve, reject) => {
-        const id = this.nextId++;
+        const id = nextJobId++;
         msg.id = id;
         this.queue.push({ id, msg, onMsg, transfer, resolve, reject });
         this._dispatch();
@@ -389,14 +427,11 @@
     }
     // Send one message to every worker (e.g. data), resolving when all reply.
     each(makeMsg) {
-      this.direct = [];
       const ps = this.workers.map((w) => new Promise((resolve, reject) => {
-        const id = this.nextId++;
+        const id = nextJobId++;
         const msg = makeMsg(w.slot);
         msg.id = id;
-        const job = { id, msg, resolve, reject, worker: w, direct: true };
-        this.jobs.set(id, job);
-        this.direct.push(job);
+        this.jobs.set(id, { id, msg, resolve, reject, worker: w });
         const k = this.idle.indexOf(w);
         if (k >= 0) this.idle.splice(k, 1);
         w.postMessage(msg);
@@ -404,20 +439,7 @@
       return Promise.all(ps);
     }
     _dispatch() {
-      // Hidden tab: finish what's running, start nothing new until it's back.
-      if (document.hidden) {
-        if (!this.waitingForVisible) {
-          this.waitingForVisible = true;
-          const resume = () => {
-            if (document.hidden) return;
-            document.removeEventListener('visibilitychange', resume);
-            this.waitingForVisible = false;
-            this._dispatch();
-          };
-          document.addEventListener('visibilitychange', resume);
-        }
-        return;
-      }
+      if (this.paused) return; // _sync() calls again when that changes
       while (this.idle.length && this.queue.length) {
         const w = this.idle.shift();
         const job = this.queue.shift();
@@ -458,8 +480,57 @@
       for (const job of this.jobs.values()) { if (job.busy) meter.setBusy(-1); job.resolve({ type: 'cancelled' }); }
       this.jobs.clear();
       this.workers = []; this.idle = [];
+      pools.delete(this);
     }
   }
+
+  // Time that counts: it runs only while the tab is visible and its owner
+  // isn't waiting for its turn.
+  const watches = new Set();
+  class Stopwatch {
+    constructor() { this.total = 0; this.from = null; this.on = false; this.held = false; watches.add(this); }
+    _sync() {
+      const live = this.on && !this.held && !document.hidden;
+      if (live && this.from == null) this.from = now();
+      else if (!live && this.from != null) { this.total += now() - this.from; this.from = null; }
+    }
+    start() { this.on = true; this._sync(); }
+    stop() { this.on = false; this._sync(); }
+    reset() { this.total = 0; this.from = null; this._sync(); }
+    hold(on) { this.held = !!on; this._sync(); }
+    get ms() { return this.total + (this.from != null ? now() - this.from : 0); }
+  }
+  const visibleClock = new Stopwatch();
+  visibleClock.start();
+  document.addEventListener('visibilitychange', () => {
+    for (const w of watches) w._sync();
+    for (const p of pools) p._sync();
+  });
+
+  // The experiments that keep every core busy take turns, so that one's
+  // timings don't include another's work: the training race goes first,
+  // otherwise whichever was started most recently. The others wait, paused.
+  const turns = {
+    list: [],
+    claim(exp) {
+      this.list = this.list.filter((e) => e.exp !== exp);
+      this.list.push({ exp, t: now() });
+      this._apply();
+    },
+    release(exp) {
+      this.list = this.list.filter((e) => e.exp !== exp);
+      if (exp.heldBy) exp.setHeld(null);
+      this._apply();
+    },
+    _apply() {
+      let top = null;
+      for (const e of this.list) {
+        const p = e.exp.priority || 0, q = top ? top.exp.priority || 0 : -1;
+        if (p > q || (p === q && e.t >= top.t)) top = e;
+      }
+      for (const e of this.list) e.exp.setHeld(e === top ? null : top.exp);
+    },
+  };
 
   // ================================================================ data
   async function fetchBinary(url) {
@@ -837,8 +908,9 @@
   const OPENINGS_PER_LEVEL = 16; // each played twice, colours swapped
 
   const tour = {
-    pool: null, running: false, round: 0, t0: 0, elapsed: 0,
-    levels: LEVELS.map((s) => ({ sims: s, score: 0, n: 0, wins: 0, draws: 0, losses: 0, planned: 0, searchMs: 0, searchMoves: 0, positions: 0 })),
+    pool: null, running: false, round: 0, clock: new Stopwatch(),
+    priority: 1, title: 'the tournament', heldBy: null,
+    levels: LEVELS.map((s) => ({ sims: s, score: 0, n: 0, wins: 0, draws: 0, losses: 0, planned: 0, searchMs: 0, searchSims: 0, positions: 0 })),
     positions: 0, games: 0, planned: 0, topLevel: LEVELS.length - 1, crossover: null,
     boards: [],
     chart: null,
@@ -879,12 +951,15 @@
     start(more) {
       if (this.running) return;
       this.running = true;
-      this.round++;
+      // Results from an earlier round that arrive late belong to no one.
+      const round = ++this.round;
+      const live = () => this.running && this.round === round;
       if (!more && this.games > 0) this._reset();
       $('tour-run').textContent = 'Stop';
       $('tour-more').hidden = true;
-      this.t0 = now();
       this.pool = this.pool || new Pool(WORKERS);
+      this.clock.start();
+      turns.claim(this);
       const seedBase = (Math.random() * 1e9) >>> 0;
       const rng = BL.makeRng(seedBase);
       const tasks = [];
@@ -903,30 +978,30 @@
       this._readouts();
       // Feed the pool lazily so we can stop before the most expensive level
       // on slow devices.
-      let next = 0;
+      let next = 0, inflight = 0;
       const pump = () => {
-        while (this.running && next < tasks.length && this.pool.queue.length < 2) {
+        if (!live()) return;
+        while (next < tasks.length && this.pool.queue.length < 2) {
           const task = tasks[next++];
           if (task.li > this.topLevel) { this.levels[task.li].planned--; this.planned--; continue; }
-          this._play(task).then(pump);
+          inflight++;
+          this._play(task, live).catch((e) => console.error(e)).then(() => { inflight--; pump(); });
         }
-        if (this.running && next >= tasks.length && this.pool.jobs.size === 0 && this.pool.queue.length === 0) this._finish();
+        if (next >= tasks.length && inflight === 0) this._finish();
       };
-      this.pump = pump;
       pump();
     },
-    _play(task) {
+    _play(task, live) {
       const L = this.levels[task.li];
       let board = null;
-      let searchStart = 0;
       return this.pool.run({ type: 'c4Game', rules: BL.STANDARD_RULES, sims: L.sims, mctsFirst: task.mctsFirst, seed: task.seed, opening: task.opening, c: 0.5 }, (m, slot) => {
+        if (!live()) return;
         if (m.type === 'start') {
           board = this._freeBoard();
           board.live = true;
           board.used = now();
           board.game.reset(); board.line = null; board.searcher = task.mctsFirst ? 1 : 2;
           board.cap.textContent = fmtSims(L.sims) + ' · playing';
-          searchStart = now();
           invalidate(board);
         } else if (m.type === 'move') {
           if (board && board.game.isLegal(m.move)) { board.game.play(m.move); invalidate(board); }
@@ -934,13 +1009,14 @@
           this.positions += m.positions; L.positions += m.positions; meter.add(m.positions, 0); this._readouts();
         }
       }).then((m) => {
-        if (m.type !== 'done') return;
+        if (m.type !== 'done' || !live()) return; // stopped: games still finishing don't count
         this.positions += m.positions; L.positions += m.positions; meter.add(m.positions, 0);
         L.n++; this.games++;
         L.score += m.score;
         if (m.score === 1) L.wins++; else if (m.score === 0) L.losses++; else L.draws++;
-        L.searchMs += now() - searchStart;
-        L.searchMoves += Math.ceil((m.plies - 2) / 2);
+        // the Searcher's own thinking time, measured where it thinks
+        L.searchMs += m.ms || 0;
+        L.searchSims += m.simsDone || 0;
         if (board) {
           board.live = false;
           board.line = m.line;
@@ -986,19 +1062,33 @@
     _finish(stopped) {
       if (!this.running) return;
       this.running = false;
-      this.elapsed += now() - this.t0;
+      this.stopped = !!stopped;
+      this.clock.stop();
+      turns.release(this);
+      // Games that were never played aren't planned any more.
+      if (stopped) {
+        for (const L of this.levels) L.planned = L.n;
+        this.planned = this.games;
+      }
       $('tour-run').textContent = this.games ? 'Run again from scratch' : 'Start the tournament';
       $('tour-more').hidden = !this.games;
       for (const b of this.boards) { b.live = false; if (!b.line) b.cap.textContent = 'idle'; }
-      this._readouts(stopped);
+      this._readouts();
       this._result(stopped);
       invalidate(this.chart);
       multiples.update();
     },
     _reset() {
-      for (const L of this.levels) Object.assign(L, { score: 0, n: 0, wins: 0, draws: 0, losses: 0, planned: 0, searchMs: 0, searchMoves: 0, positions: 0 });
-      this.games = 0; this.planned = 0; this.positions = 0; this.elapsed = 0; this.crossover = null; this.trimChecked = false;
+      for (const L of this.levels) Object.assign(L, { score: 0, n: 0, wins: 0, draws: 0, losses: 0, planned: 0, searchMs: 0, searchSims: 0, positions: 0 });
+      this.games = 0; this.planned = 0; this.positions = 0; this.crossover = null; this.trimChecked = false;
+      this.clock.reset();
       this.chart.pops.clear();
+    },
+    setHeld(by) {
+      this.heldBy = by;
+      if (this.pool) this.pool.hold(!!by);
+      this.clock.hold(!!by);
+      this._readouts();
     },
     rate(L) { return L.n ? L.score / L.n : null; },
     // Logistic fit of the Searcher's score against log2(imagined games), by
@@ -1038,26 +1128,26 @@
     },
     computeCrossover() {
       // first rise through 50%, interpolated on the log axis
-      const pts = this.levels.map((L, i) => ({ i, p: this.rate(L), n: L.n, L })).filter((q) => q.n >= Math.min(8, q.L.planned || 8));
+      const pts = this.levels.map((L, i) => ({ i, p: this.rate(L), n: L.n, L })).filter((q) => q.n >= 8);
       for (let k = 0; k + 1 < pts.length; k++) {
         const a = pts[k], b = pts[k + 1];
         if (b.i !== a.i + 1) continue;
         if (a.p < 0.5 && b.p >= 0.5) {
           const t = (0.5 - a.p) / (b.p - a.p);
           const sims = Math.pow(4, a.i + t);
-          const msPerSim = (a.L.searchMoves ? a.L.searchMs / a.L.searchMoves / a.L.sims : 0) || 0;
+          const msPerSim = (a.L.searchSims ? a.L.searchMs / a.L.searchSims : 0) || 0;
           return { sims, msPerMove: msPerSim * sims };
         }
       }
       return null;
     },
-    _readouts(stopped) {
+    _readouts() {
       const levelNow = this.levels.findIndex((L) => L.n < L.planned);
       const st = this.running
-        ? 'level ' + (levelNow + 1) + ' of ' + (this.topLevel + 1) + ' · ' + fmtInt(this.levels[Math.max(0, levelNow)].sims) + ' imagined games per move'
-        : this.games ? (stopped ? 'stopped' : 'finished') + ' · ' + this.games + ' games' : 'waiting';
+        ? (this.heldBy ? 'paused while ' + this.heldBy.title + ' runs' : 'level ' + (levelNow + 1) + ' of ' + (this.topLevel + 1) + ' · ' + fmtInt(this.levels[Math.max(0, levelNow)].sims) + ' imagined games per move')
+        : this.games ? (this.stopped ? 'stopped' : 'finished') + ' · ' + this.games + ' games' : 'waiting';
       $('tour-status').textContent = st;
-      const t = this.running ? this.elapsed + now() - this.t0 : this.elapsed;
+      const t = this.clock.ms;
       $('tour-readouts').innerHTML = '';
       const add = (k, v) => { const s = document.createElement('span'); s.innerHTML = k + ' <b></b>'; s.lastChild.textContent = v; $('tour-readouts').appendChild(s); };
       add('games', this.games + (this.running ? ' of ' + this.planned : ''));
@@ -1160,6 +1250,23 @@
       ctx.restore();
       ctx.restore();
     }
+    // Direct labels at the right end of each line, then the crossover label
+    // wherever it fits without running off the chart or into them.
+    const textW = (txt, font) => { ctx.save(); ctx.font = font; const tw = ctx.measureText(txt).width; ctx.restore(); return tw; };
+    const boxOf = (txt, font, x0, y, align) => { const tw = textW(txt, font); const l = align === 'right' ? x0 - tw : x0; return { l, r: l + tw, t: y - 9, b: y + 9 }; };
+    const hits = (a, b) => a.l < b.r + 4 && b.l < a.r + 4 && a.t < b.b && b.t < a.b;
+    const ends = [];
+    const last = pts[pts.length - 1];
+    if (!compact && last) {
+      const xx = A.tx(last.L.sims);
+      const ys = A.ty(last.p), ye = A.ty(1 - last.p);
+      const sep = Math.abs(ys - ye) < 26 ? 13 : 0;
+      const right = xx > A.r - 120;
+      const font = FONT.sans(13, 600), align = right ? 'right' : 'left', lx = xx + (right ? -10 : 10);
+      ends.push({ txt: 'Searcher', y: ys + (ys < ye ? -sep : sep), color: P.computeInk });
+      ends.push({ txt: 'Expert', y: ye + (ye < ys ? -sep : sep), color: P.knowledgeInk });
+      for (const e of ends) { e.font = font; e.align = align; e.x = lx; e.box = boxOf(e.txt, font, lx, e.y, align); }
+    }
     if (x) {
       const cx = A.tx(x.sims);
       ctx.save();
@@ -1168,22 +1275,26 @@
       ctx.setLineDash([]);
       ctx.beginPath(); ctx.arc(cx, A.ty(0.5), compact ? 5 : 7, 0, Math.PI * 2); ctx.lineWidth = 1.5; ctx.stroke();
       ctx.restore();
-      const txt = compact ? 'crossover' : 'crossover · ≈' + fmtInt(sig2(x.sims)) + ' per move';
-      label(ctx, txt, cx + 8, A.t + 10, { font: FONT.sans(compact ? 10 : 12.5, 600), color: P.ink });
-    }
-    if (!compact) {
-      // direct labels at the right end of each line
-      const last = pts[pts.length - 1];
-      if (last) {
-        const xx = A.tx(last.L.sims);
-        const ys = A.ty(last.p), ye = A.ty(1 - last.p);
-        const sep = Math.abs(ys - ye) < 26 ? 13 : 0;
-        const right = xx > A.r - 120;
-        label(ctx, 'Searcher', xx + (right ? -10 : 10), ys + (ys < ye ? -sep : sep), { align: right ? 'right' : 'left', color: P.computeInk, font: FONT.sans(13, 600) });
-        label(ctx, 'Expert', xx + (right ? -10 : 10), ye + (ye < ys ? -sep : sep), { align: right ? 'right' : 'left', color: P.knowledgeInk, font: FONT.sans(13, 600) });
-      } else {
-        label(ctx, 'The tournament starts when this panel scrolls into view.', (A.l + A.r) / 2, (A.t + A.b) / 2 - 14, { align: 'center', color: P.ink3, font: FONT.sans(13) });
+      const font = FONT.sans(compact ? 10 : 12.5, 600);
+      const n = fmtInt(sig2(x.sims));
+      const texts = compact ? ['crossover'] : ['crossover · ≈' + n + ' per move', '≈' + n + ' per move'];
+      let pick = null;
+      for (const txt of texts) {
+        for (const y of [A.t + 10, A.b - 10]) {
+          for (const align of ['left', 'right']) {
+            const bx = boxOf(txt, font, align === 'left' ? cx + 8 : cx - 8, y, align);
+            if (bx.l >= A.l + 2 && bx.r <= A.r - 2 && !ends.some((e) => hits(bx, e.box))) { pick = { txt, y, align }; break; }
+          }
+          if (pick) break;
+        }
+        if (pick) break;
       }
+      if (!pick) pick = { txt: texts[texts.length - 1], y: A.t + 10, align: A.r - cx > cx - A.l ? 'left' : 'right' };
+      label(ctx, pick.txt, pick.align === 'left' ? cx + 8 : cx - 8, pick.y, { align: pick.align, font, color: P.ink });
+    }
+    for (const e of ends) label(ctx, e.txt, e.x, e.y, { align: e.align, color: e.color, font: e.font });
+    if (!compact && !last) {
+      label(ctx, 'The tournament starts when this panel scrolls into view.', (A.l + A.r) / 2, (A.t + A.b) / 2 - 14, { align: 'center', color: P.ink3, font: FONT.sans(13) });
     }
   }
 
@@ -1210,7 +1321,6 @@
       this.hoverCol = -1;
       this.line = null;
       this.positions = 0;
-      this.jobId = 0;
       this.canvas.tabIndex = 0;
       this._bind();
     }
@@ -1234,9 +1344,8 @@
       if (!this.humanFirst) this._searcherTurn();
     }
     _cancelThinking() {
-      if (this.thinking && this.worker) this.worker.postMessage({ type: 'cancel', id: this.jobId });
+      if (this.thinking && this.worker) this.worker.cancelAll();
       this.thinking = false;
-      meter.setBusy(this.busy ? -1 : 0); this.busy = false;
     }
     _geom() {
       const w = this.surface.w, h = this.surface.h, R = this.rules;
@@ -1296,10 +1405,12 @@
       this.thinkStart = now();
       this.thinkSims = sims;
       if (!this.worker) this.worker = new Pool(1);
-      if (!this.busy) { this.busy = true; }
       this._say('<b>Thinking.</b> Imagining ' + fmtInt(sims) + ' games…');
+      // A reset replaces this.game; anything the old search says after that
+      // is about a game that no longer exists.
+      const gameAtStart = this.game;
       const job = this.worker.run({ type: 'c4Think', rules: this.rules, moves: this.history.slice(), sims, seed: (Math.random() * 4e9) >>> 0, c: 0.5 }, (m) => {
-        if (m.type === 'start') this.jobId = m.id;
+        if (gameAtStart !== this.game) return;
         if (m.type === 'stats') {
           this.stats = m;
           this.positions += m.positions; meter.add(m.positions, 0);
@@ -1307,11 +1418,9 @@
           invalidate(this);
         }
       });
-      const gameAtStart = this.game;
       job.then((m) => {
         if (gameAtStart !== this.game || m.type !== 'done') return;
         this.thinking = false;
-        this.busy = false;
         this.positions += m.positions; meter.add(m.positions, 0);
         this.stats = m;
         if (m.move < 0) return;
@@ -1493,14 +1602,16 @@
   const CNN_CONFIG = { f1: 8, f2: 16, lr: 0.003, batch: 32, seed: 2012 };
   const CNN_EPOCHS = 8, FE_EPOCHS = 12;
   const EVAL_SUBSET = 2500; // test digits used for the points along the way; the end uses all
+  const QUICK_EVAL = 500, QUICK_EVAL_BELOW = 1.2e9; // the Learner's first points come fast: grade them on fewer
   const CHECKPOINTS = [];
   for (let e = 5; e <= 12.001; e += 0.25) CHECKPOINTS.push(Math.pow(10, e));
   const fmtRate = (r) => (r >= 0.1 ? (r * 100).toFixed(0) : r >= 0.01 ? (r * 100).toFixed(1) : (r * 100).toFixed(2)) + '%';
 
   const race = {
-    pool: null, running: false, done: false,
+    pool: null, running: false, done: false, stopped: false, runId: 0,
+    priority: 2, title: 'the training race', heldBy: null, clock: new Stopwatch(), timeline: [[0, 0]],
     rulebook: null, fe: [], cnn: [], feDone: false, cnnDone: false,
-    net: null, flops: 0, seen: 0, t0: 0, elapsed: 0,
+    net: null, flops: 0, seen: 0, elapsed: 0,
     feW: null, feB: null, feFlops: 0,
     init() {
       this.chart = { dirty: true, draw: (t) => drawRaceChart(this.chart.surface, this, t, false) };
@@ -1560,36 +1671,44 @@
     },
     async start() {
       if (this.running) return;
+      // Every await below re-checks this: a Stop, or a new start, retires
+      // the run that was waiting.
+      const run = ++this.runId;
       this.started = true;
       this.running = true;
+      this.stopped = false;
+      this._killPools();
+      this.clock.stop(); this.clock.reset();
+      turns.claim(this);
       $('race-run').textContent = 'Stop';
       $('race-status').textContent = 'loading 3.6 MB of handwritten digits…';
       let data;
       try { data = await loadDigits(); } catch (e) {
-        $('race-status').textContent = e.message; this.running = false; $('race-run').textContent = 'Try again'; return;
+        if (run !== this.runId) return;
+        $('race-status').textContent = e.message; this.running = false; turns.release(this); $('race-run').textContent = 'Try again'; return;
       }
       draw.setData(data);
-      if (!this.running) return;
+      if (run !== this.runId) return;
       this._reset();
       this._setMapDigit(data);
       this.data = data;
       // Gradients on every core we can have; one more core each for the
       // Rulebook and Feature Engineer, and for grading the Learner.
-      this.pool = new Pool(WORKERS);
-      this.sidePool = new Pool(1);
-      this.evalPool = new Pool(1);
-      $('race-status').textContent = 'sending the digits to ' + (this.pool.size + 2) + ' threads…';
+      const pool = this.pool = new Pool(WORKERS);
+      const sidePool = this.sidePool = new Pool(1);
+      const evalPool = this.evalPool = new Pool(1);
+      $('race-status').textContent = workersBroken ? 'preparing the digits…' : 'sending the digits to ' + (pool.size + 2) + ' threads…';
       await Promise.all([
-        this.pool.each(() => ({ type: 'setData', train: data.trainBuf })),
-        this.sidePool.each(() => ({ type: 'setData', train: data.trainBuf, test: data.testBuf })),
-        this.evalPool.each(() => ({ type: 'setData', test: data.testBuf })),
+        pool.each(() => ({ type: 'setData', train: data.trainBuf })),
+        sidePool.each(() => ({ type: 'setData', train: data.trainBuf, test: data.testBuf })),
+        evalPool.each(() => ({ type: 'setData', test: data.testBuf })),
       ]);
-      if (!this.running) return;
-      this.t0 = now();
-      const run = this.runId;
+      if (run !== this.runId) return;
+      this.clock.reset();
+      this.clock.start();
       // The Rulebook reads all the test digits once.
       if (BL.rulebook) {
-        this.sidePool.run({ type: 'rulebookEval' }).then((m) => {
+        sidePool.run({ type: 'rulebookEval' }).then((m) => {
           if (m.type !== 'done' || run !== this.runId) return;
           const n = this.data.test.count;
           this.rulebook = { errors: m.wrong.length, rate: m.wrong.length / n, n, wrong: m.wrong, preds: m.preds, ms: m.ms };
@@ -1597,7 +1716,7 @@
         });
       }
       // The Feature Engineer trains on one core.
-      this.sidePool.run({ type: 'feTrain', epochs: FE_EPOCHS, checkpoints: CHECKPOINTS, lr: 0.003, batch: 32, seed: 11, evalCount: EVAL_SUBSET }, (m) => {
+      sidePool.run({ type: 'feTrain', epochs: FE_EPOCHS, checkpoints: CHECKPOINTS, lr: 0.003, batch: 32, seed: 11, evalCount: EVAL_SUBSET }, (m) => {
         if (run !== this.runId) return;
         if (m.type === 'point') {
           this.fe.push({ flops: Math.max(m.flops, 1e5), rate: m.rate, n: m.n, errors: m.errors, final: m.final });
@@ -1609,31 +1728,39 @@
           meter.add(0, m.flops - this.feFlops); this.feFlops = m.flops;
         }
       }).then((m) => {
-        if (m.type === 'done' && run === this.runId) { this.feDone = true; this._readouts(); this._maybeDone(); }
+        if (m.type === 'done' && run === this.runId) { this.feDone = true; this._readouts(); this._maybeDone(run); }
       });
       // The Learner trains data-parallel across all cores.
-      this._trainLoop();
+      this._trainLoop(run);
     },
     _reset() {
-      this.runId = (this.runId || 0) + 1;
       this.fe = []; this.cnn = []; this.feDone = false; this.cnnDone = false; this.done = false;
-      this.flops = 0; this.seen = 0; this.elapsed = 0; this.feFlops = 0; this.trainEnd = 0; this.pendingSnap = null; this.evalLoop = null;
-      this.rulebook = null;
+      this.flops = 0; this.seen = 0; this.feFlops = 0; this.trainEnd = 0; this.pendingSnap = null; this.evalLoop = null;
+      this.rulebook = null; this.engine = null; this.epoch = 0;
       this.net = new BL.digits.ConvNet(CNN_CONFIG);
       this.trainMs = 0;
+      this.timeline = [[0, 0]]; // [Learner FLOP, ms of training], step by step
+      this.clock.reset();
       this._paintFilters();
       $('race-result').textContent = '';
     },
+    _killPools() {
+      for (const k of ['pool', 'sidePool', 'evalPool']) if (this[k]) { this[k].terminate(); this[k] = null; }
+    },
+    setHeld(by) { // the race always has priority, but keep the interface
+      this.heldBy = by;
+      for (const k of ['pool', 'sidePool', 'evalPool']) if (this[k]) this[k].hold(!!by);
+      this.clock.hold(!!by);
+    },
     // Evaluate a snapshot of the weights on the evaluation worker. Training
     // never waits for this; if snapshots pile up, only the newest is kept.
-    _queueEval(full, flopsOverride) {
-      this.pendingSnap = { w: this.net.getParams(), flops: flopsOverride || this.flops, seen: this.seen, full };
-      if (!this.evalLoop) this.evalLoop = this._evalLoop();
+    _queueEval(run, full) {
+      this.pendingSnap = { w: this.net.getParams(), flops: this.flops, seen: this.seen, full };
+      if (!this.evalLoop) this.evalLoop = this._evalLoop(run);
       return this.evalLoop;
     },
-    async _evalLoop() {
+    async _evalLoop(run) {
       const config = JSON.stringify(CNN_CONFIG);
-      const run = this.runId;
       while (this.pendingSnap && this.evalPool && run === this.runId) {
         const snap = this.pendingSnap;
         this.pendingSnap = null;
@@ -1647,19 +1774,20 @@
       }
       if (run === this.runId) this.evalLoop = null;
     },
-    async _trainLoop() {
-      const net = this.net, data = this.data, pool = this.pool, run = this.runId;
+    async _trainLoop(run) {
+      const net = this.net, data = this.data, pool = this.pool;
       const N = data.train.count, B = CNN_CONFIG.batch;
       const stepsPerEpoch = Math.floor(N / B), totalSteps = stepsPerEpoch * CNN_EPOCHS;
       const rng = BL.digits.makeFloatRng(4242);
       const config = JSON.stringify(CNN_CONFIG);
+      const live = () => this.running && run === this.runId;
       let ci = 0;
       // Early points come thick and fast; measure them on 500 digits, pausing
       // training (and its clock) while we do.
       const quickEval = async (flops) => {
-        const n = Math.min(500, data.test.count), w = net.getParams();
+        const n = Math.min(QUICK_EVAL, data.test.count), w = net.getParams();
         const r = await this.evalPool.run({ type: 'cnnEval', config, w, from: 0, to: n });
-        if (!r || r.type !== 'done') return false;
+        if (!r || r.type !== 'done' || !live()) return false;
         const wrong = r.wrong.length;
         this.cnn.push({ flops, rate: wrong / n, n, errors: wrong, seen: this.seen });
         invalidate(this.chart); this._readouts(); multiples.update();
@@ -1667,12 +1795,14 @@
       };
       if (!(await quickEval(1e5))) return;
       let lastPaint = 0;
-      for (let e = 0; e < CNN_EPOCHS && this.running; e++) {
+      for (let e = 0; e < CNN_EPOCHS && live(); e++) {
         const order = Array.from({ length: N }, (_, i) => i);
         for (let i = N - 1; i > 0; i--) { const j = rng.int(i + 1); const t = order[i]; order[i] = order[j]; order[j] = t; }
-        for (let s = 0; s < stepsPerEpoch && this.running; s++) {
+        for (let s = 0; s < stepsPerEpoch && live(); s++) {
           const step = e * stepsPerEpoch + s;
-          const ts = now();
+          // Training time is counted on a clock that stops while the tab
+          // is hidden (when nothing new is sent to the workers).
+          const ts = visibleClock.ms;
           const idx = order.slice(s * B, s * B + B);
           const k = pool.size, per = Math.ceil(B / k);
           const w = net.getParams();
@@ -1682,16 +1812,17 @@
             if (shard.length) parts.push(pool.run({ type: 'cnnGrad', config, w, indices: shard }));
           }
           const res = await Promise.all(parts);
-          if (!this.running || run !== this.runId || res.some((r) => r.type !== 'done')) return;
+          if (!live() || res.some((r) => r.type !== 'done')) return;
           net.zeroGrads();
           for (const r of res) net.addGrads(r.grads);
           this.engine = res[0].wasm ? 'WebAssembly' : 'JavaScript';
           net.setLearningRate(CNN_CONFIG.lr * 0.5 * (1 + Math.cos(Math.PI * step / totalSteps)));
           net.step(B);
-          this.trainMs += now() - ts;
+          this.trainMs += visibleClock.ms - ts;
           this.seen += B;
           const f = B * net.flopsPerExample;
           this.flops += f;
+          this.timeline.push([this.flops, this.trainMs]);
           meter.add(0, f);
           this.epoch = e + 1;
           const t = now();
@@ -1703,28 +1834,30 @@
           }
           if (ci < CHECKPOINTS.length && this.flops >= CHECKPOINTS[ci]) {
             while (ci < CHECKPOINTS.length && this.flops >= CHECKPOINTS[ci]) ci++;
-            if (this.flops < 1.2e9) { if (!(await quickEval(this.flops))) return; }
-            else this._queueEval(false);
+            if (this.flops < QUICK_EVAL_BELOW) { if (!(await quickEval(this.flops))) return; }
+            else this._queueEval(run, false);
           }
         }
       }
-      if (!this.running || run !== this.runId) return;
-      this.trainEnd = now();
+      if (!live()) return;
+      this.trainEnd = this.clock.ms;
       this._paintFilters();
       if (this.evalLoop) await this.evalLoop;
-      await this._queueEval(true);
-      if (run !== this.runId) return;
+      if (!live()) return;
+      await this._queueEval(run, true);
+      if (!live()) return;
       this.cnnDone = true;
       invalidate(this.chart);
-      this._maybeDone();
+      this._maybeDone(run);
     },
-    _maybeDone() {
+    _maybeDone(run) {
+      if (run !== this.runId || !this.running) return;
       if (!(this.cnnDone && this.feDone)) { this._readouts(); return; }
       this.running = false; this.done = true;
-      this.elapsed = this.trainEnd ? this.trainEnd - this.t0 : now() - this.t0;
-      if (this.pool) { this.pool.terminate(); this.pool = null; }
-      if (this.evalPool) { this.evalPool.terminate(); this.evalPool = null; }
-      if (this.sidePool) { this.sidePool.terminate(); this.sidePool = null; }
+      this.elapsed = this.trainEnd || this.clock.ms;
+      this.clock.stop();
+      this._killPools();
+      turns.release(this);
       $('race-run').textContent = 'Train again from scratch';
       this._readouts();
       this._result();
@@ -1733,14 +1866,16 @@
     },
     stop() {
       if (!this.running) return;
+      this.runId++;
       this.running = false;
-      if (this.pool) { this.pool.terminate(); this.pool = null; }
-      if (this.evalPool) { this.evalPool.terminate(); this.evalPool = null; }
-      if (this.sidePool) { this.sidePool.terminate(); this.sidePool = null; }
+      this.stopped = true;
+      this._killPools();
+      turns.release(this);
       this.pendingSnap = null;
-      this.elapsed = this.t0 ? now() - this.t0 : 0;
+      this.clock.stop();
+      this.elapsed = this.clock.ms;
       $('race-run').textContent = 'Start training again';
-      this._readouts(true);
+      this._readouts();
     },
     feBest() {
       if (!this.fe.length) return null;
@@ -1768,9 +1903,15 @@
       return out;
     },
     timeAtFlops(f) { // milliseconds of training the Learner needed to reach f FLOP
-      return f / Math.max(1, this.flops) * this.trainMs;
+      const T = this.timeline;
+      let lo = 0, hi = T.length - 1;
+      if (!(f > 0) || hi < 1) return 0;
+      if (f >= T[hi][0]) return T[hi][1];
+      while (hi - lo > 1) { const mid = (lo + hi) >> 1; if (T[mid][0] < f) lo = mid; else hi = mid; }
+      const [f0, t0] = T[lo], [f1, t1] = T[hi];
+      return t0 + (t1 - t0) * (f - f0) / Math.max(1, f1 - f0);
     },
-    _readouts(stopped) {
+    _readouts() {
       const el = $('race-readouts');
       el.innerHTML = '';
       const add = (k, v) => { const s = document.createElement('span'); s.innerHTML = k + ' <b></b>'; s.lastChild.textContent = v; el.appendChild(s); };
@@ -1781,10 +1922,10 @@
       const c = last(this.cnn);
       if (c) add('Learner', fmtRate(c.rate) + ' · epoch ' + (this.epoch || 0) + ' of ' + CNN_EPOCHS);
       add('Learner FLOP', fmtSci(this.flops));
-      add('time', fmtTime(this.running ? now() - this.t0 : this.elapsed));
+      add('time', fmtTime(this.running ? this.clock.ms : this.elapsed || 0));
       if (this.running) $('race-status').textContent = 'training ' + (workersBroken ? 'on the main thread' : 'on ' + (this.pool ? this.pool.size : 1) + ' cores') + (this.engine ? ' in ' + this.engine : '') + ' · ' + fmtInt(this.seen) + ' examples';
       else if (this.done) $('race-status').textContent = 'finished' + (this.engine ? ' · trained in ' + this.engine : '');
-      else if (stopped) $('race-status').textContent = 'stopped';
+      else if (this.stopped) $('race-status').textContent = 'stopped';
     },
     _result() {
       const x = this.crossings();
@@ -2228,6 +2369,7 @@
 
   const vary = {
     running: false, results: [],
+    priority: 1, title: 'New worlds', heldBy: null,
     init() {
       const list = $('vary-list');
       VARIANTS.forEach((v) => {
@@ -2268,7 +2410,7 @@
     },
     // One match: 24 games over 12 random openings. If the Searcher loses it,
     // its answer is the general method's answer: more computation.
-    _match(vi, sims, rng, depth) {
+    _match(vi, sims, rng, depth, run) {
       const v = VARIANTS[vi];
       const rules = BL.normalizeRules(Object.assign({}, BL.STANDARD_RULES, v.rules));
       const R = { sims, score: 0, n: 0, planned: VARY_OPENINGS * 2 };
@@ -2282,6 +2424,7 @@
           this.pool.run({ type: 'c4Game', rules, sims, mctsFirst: first, seed: rng(), opening, c: 0.5 }, (m) => {
             if (m.type === 'work') meter.add(m.positions, 0);
           }).then((m) => {
+            if (run !== this.runId) return; // from a run that was stopped
             this.outstanding--;
             if (m.type === 'done') {
               meter.add(m.positions, 0);
@@ -2289,7 +2432,7 @@
               this._paintRow(v.bars[row], R);
               if (R.n === R.planned && R.score / R.n < 0.5 && depth < 2 && this.running) {
                 this._addRow(v, sims * 4);
-                this._match(vi, sims * 4, rng, depth + 1);
+                this._match(vi, sims * 4, rng, depth + 1, run);
               }
               this._status();
             }
@@ -2299,22 +2442,33 @@
       }
     },
     start() {
+      if (this.running) return;
       this.started = true;
       this.running = true;
       $('vary-run').textContent = 'Stop';
       $('vary-result').textContent = '';
       this.results = VARIANTS.map(() => []);
       VARIANTS.forEach((v) => this._resetRows(v));
+      if (this.pool) this.pool.terminate();
       this.pool = new Pool(WORKERS);
+      turns.claim(this);
+      const run = this.runId = (this.runId || 0) + 1;
       this.outstanding = 0;
       const rng = BL.makeRng((Math.random() * 4e9) >>> 0);
-      VARIANTS.forEach((v, vi) => { if (v.rules.gravity !== false) this._match(vi, VARY_SIMS, rng, 0); });
+      VARIANTS.forEach((v, vi) => { if (v.rules.gravity !== false) this._match(vi, VARY_SIMS, rng, 0, run); });
       this._status();
     },
     stop() { this._finish(true); },
+    setHeld(by) {
+      this.heldBy = by;
+      if (this.pool) this.pool.hold(!!by);
+      this._status();
+    },
     _finish(stopped) {
       if (!this.running) return;
       this.running = false;
+      this.runId++;
+      turns.release(this);
       if (this.pool) { this.pool.terminate(); this.pool = null; }
       $('vary-run').textContent = 'Play them again';
       $('vary-status').textContent = stopped ? 'stopped' : 'finished';
@@ -2326,9 +2480,9 @@
       if (k5.length > 1) {
         const last = k5[k5.length - 1];
         txt += ' On the bigger board, five in a row, ' + fmtInt(VARY_SIMS) + ' was not enough (' + f(k5[0]) + '). ' +
-          k5.slice(1).map((r) => 'At ' + fmtInt(r.sims) + ' it scored ' + f(r)).join('; ') + '.';
+          k5.slice(1).map((r, i) => (i ? 'at ' : 'At ') + fmtInt(r.sims) + ' it scored ' + f(r)).join('; ') + '.';
         txt += last.score / last.n >= 0.5 ? ' Nobody had to rewrite anything.' : ' It needs still more computation on this board, but nobody has to rewrite anything to give it that.';
-      } else if (k5.length) txt += ' Five in a row on the bigger board: ' + f(k5[0]) + '.';
+      } else if (k5.length) txt += ' Five in a row on the bigger board: ' + f(k5[0]) + (k5[0].n && k5[0].score / k5[0].n < 0.6 ? ', a close match, because some of the Expert\'s knowledge carries over.' : '.');
       $('vary-result').textContent = txt;
     },
     _paintRow(row, R) {
@@ -2340,7 +2494,7 @@
     _status() {
       let n = 0, p = 0;
       for (const list of this.results) for (const r of list) { n += r.n; p += r.planned; }
-      if (this.running) $('vary-status').textContent = n + ' of ' + p + ' games';
+      if (this.running) $('vary-status').textContent = this.heldBy ? 'paused while ' + this.heldBy.title + ' runs' : n + ' of ' + p + ' games';
     },
   };
 
@@ -2360,10 +2514,11 @@
       this.board = new PlayBoard({
         canvas: $('inv-board'), say: $('inv-say'), humanFirst: true,
         getSims: () => 1 << +$('inv-sims').value,
-        onEnd: (o) => {
-          const rules = this.rules;
+        onEnd: (o, board) => {
+          // describe the game that was played, whatever the knobs say now
           const msg = o === 'win' ? '<b>You win.</b> Raise its imagination and try again.' : o === 'loss' ? '<b>It wins.</b> A game nobody had played until a minute ago, and no strategy written for it.' : '<b>A draw.</b>';
-          this.board._say(msg + '<small>' + this._describe(rules) + ' · ' + fmtInt(1 << +$('inv-sims').value) + ' imagined games per move</small>');
+          this.board._say(msg + '<small>' + this._describe(board.rules) + (board.thinkSims ? ' · ' + fmtInt(board.thinkSims) + ' imagined games per move' : '') + '</small>');
+          this._status();
         },
       });
       this._sync(true);
@@ -2390,18 +2545,26 @@
       $('inv-wrap').disabled = w < k;
       if (w < k) $('inv-wrap').checked = false;
       this.rules = this._rules();
-      $('inv-status').textContent = this._describe(this.rules);
       if (initial || !this.board.history.length || this.board.over) {
         this.board.humanFirst = !this.searcherFirst;
         this.board.setRules(this.rules);
         this.board._say('Rules set: ' + this._describe(this.rules) + '. ' + (this.searcherFirst ? 'The Searcher moves first.' : 'Your move.'));
       }
+      this._status();
+    },
+    // The game on the board keeps its rules; changed knobs apply to the next.
+    _status() {
+      const playing = this.board.rules, next = this.rules;
+      const same = JSON.stringify(playing) === JSON.stringify(next);
+      const midGame = this.board.history.length && !this.board.over;
+      $('inv-status').textContent = same || !midGame ? this._describe(next) : 'next game: ' + this._describe(next);
     },
     play() {
       this.rules = this._rules();
       this.board.humanFirst = !this.searcherFirst;
       this.board.setRules(this.rules);
       if (!this.searcherFirst) this.board._say('A new game: ' + this._describe(this.rules) + '. Your move.');
+      this._status();
     },
   };
 
