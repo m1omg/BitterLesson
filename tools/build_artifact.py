@@ -27,7 +27,7 @@ def main():
         code = open(path, encoding='utf-8').read()
         assert '</script' not in code, path
         return '<script id="src-%s">\n%s\n</script>' % (name, code)
-    body = re.sub(r'<script src="(assets/js/[a-z]+\.js)"></script>', inline, body)
+    body = re.sub(r'<script src="(assets/js/[a-z-]+\.js)"></script>', inline, body)
     # The host serves only standard web types, so binary data travels as
     # base64 text next to the page.
     outdir = os.path.join(os.path.dirname(out), 'assets', 'data')

@@ -442,5 +442,33 @@
     return dst;
   }
 
-  BL.digits = { parseDigits, makeFloatRng, HOG, hogFeatures, LinearClassifier, ConvNet, softmaxInPlace, shiftInto };
+  // ---------------------------------------------------------------- wasm
+  // The same network's maths compiled to WebAssembly SIMD (wasm/cnn.c), used
+  // by the workers when the browser allows it. Several times faster than
+  // the JavaScript above, which remains the reference and the fallback.
+  let wasmCnn = null;
+  function cnnWasm(config) {
+    if (wasmCnn !== null) return wasmCnn || null;
+    wasmCnn = false;
+    try {
+      if ((config.f1 || 8) !== 8 || (config.f2 || 16) !== 16) return null;
+      if (typeof WebAssembly === 'undefined' || !BL.cnnWasmBase64) return null;
+      const bin = atob(BL.cnnWasmBase64);
+      const bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      const e = new WebAssembly.Instance(new WebAssembly.Module(bytes), {}).exports;
+      const mem = e.memory.buffer, n = e.param_count(), mb = e.max_batch();
+      wasmCnn = {
+        exports: e, maxBatch: mb,
+        P: new Float32Array(mem, e.params(), n), G: new Float32Array(mem, e.grads(), n),
+        X: new Uint8Array(mem, e.images(), mb * 784), Y: new Uint8Array(mem, e.labels(), mb),
+        PRED: new Int32Array(mem, e.preds(), mb),
+      };
+    } catch (err) {
+      wasmCnn = false;
+    }
+    return wasmCnn || null;
+  }
+
+  BL.digits = { parseDigits, makeFloatRng, HOG, hogFeatures, LinearClassifier, ConvNet, softmaxInPlace, shiftInto, cnnWasm };
 })(typeof globalThis !== 'undefined' ? globalThis : self);

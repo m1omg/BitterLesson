@@ -129,6 +129,22 @@
   // One data-parallel slice of a ConvNet minibatch: load the weights we're
   // given, return the summed gradients for our examples.
   function cnnGrad(msg, post) {
+    const W = msg.noWasm ? null : BL.digits.cnnWasm(JSON.parse(msg.config));
+    if (W) {
+      W.P.set(msg.w);
+      W.exports.prepare();
+      W.exports.zero_grads();
+      const idx = msg.indices, train = state.train;
+      for (let s = 0; s < idx.length; s += W.maxBatch) {
+        const n = Math.min(W.maxBatch, idx.length - s);
+        for (let j = 0; j < n; j++) { W.X.set(image(train, idx[s + j]), j * 784); W.Y[j] = train.labels[idx[s + j]]; }
+        W.exports.train(n);
+      }
+      W.exports.export_grads();
+      const grads = W.G.slice();
+      post({ id: msg.id, type: 'done', grads, loss: 0, count: idx.length, wasm: true }, [grads.buffer]);
+      return;
+    }
     const net = replica(msg.config);
     net.setParams(msg.w);
     net.zeroGrads();
@@ -141,6 +157,20 @@
 
   // Test errors of a ConvNet over a slice of the test set.
   function cnnEval(msg, post) {
+    const W = msg.noWasm ? null : BL.digits.cnnWasm(JSON.parse(msg.config));
+    if (W) {
+      W.P.set(msg.w);
+      W.exports.prepare();
+      const test = state.test, wrong = [];
+      for (let s = msg.from; s < msg.to; s += W.maxBatch) {
+        const n = Math.min(W.maxBatch, msg.to - s);
+        W.X.set(test.images.subarray(s * 784, (s + n) * 784), 0);
+        W.exports.predict(n);
+        for (let j = 0; j < n; j++) if (W.PRED[j] !== test.labels[s + j]) wrong.push(s + j);
+      }
+      post({ id: msg.id, type: 'done', wrong, wasm: true });
+      return;
+    }
     const net = replica(msg.config);
     net.setParams(msg.w);
     const wrong = [];

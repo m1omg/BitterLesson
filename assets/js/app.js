@@ -324,7 +324,7 @@
   // with its scripts inlined, build the worker from those scripts instead.
   let workerBlobUrl = null;
   function makeWorker() {
-    const parts = ['src-connect', 'src-digits', 'src-rulebook', 'src-tasks'].map((id) => document.getElementById(id));
+    const parts = ['src-connect', 'src-digits', 'src-cnn-wasm', 'src-rulebook', 'src-tasks'].map((id) => document.getElementById(id));
     if (parts.every(Boolean)) {
       if (!workerBlobUrl) {
         const code = parts.map((e) => e.textContent).join('\n;\n') +
@@ -1280,6 +1280,7 @@
     }
     _end() {
       this.over = true;
+      this.stats = null;
       this.line = this.game.findLine();
       const r = this.game.result;
       const outcome = r === 0 ? 'draw' : r === this.humanPlayer ? 'win' : 'loss';
@@ -1412,11 +1413,12 @@
       } else if (outcome === 'loss') {
         rec.l++;
         const beaten = this.record.map((r, i) => (r.w ? i : -1)).filter((i) => i >= 0);
-        const tail = beaten.length ? ' You have beaten it at ' + fmtInt(LADDER[Math.max(...beaten)]) + ' imagined games per move; at ' + fmtInt(sims) + ', it beat you.' : '';
-        this.board._say('<b>It wins.</b> It knows nothing about Connect Four. It imagined ' + fmtInt(sims) + ' games before each move, and that was enough.' + tail + '<small>it imagined ' + fmtBig(pos) + ' positions this game · press New game to try again</small>');
+        const best = beaten.length ? Math.max(...beaten) : -1;
+        const tail = best >= 0 && best < this.level ? ' You have beaten it at ' + fmtInt(LADDER[best]) + ' imagined games per move; at ' + fmtInt(sims) + ', it beat you.' : '';
+        this.board._say('<b>It wins.</b> It knows nothing about Connect Four. It imagined ' + fmtInt(sims) + ' games before each move, and that was enough.' + tail + '<small>it imagined ' + fmtBig(pos) + ' positions this game</small>');
       } else {
         rec.d++;
-        this.board._say('<b>A draw.</b> Press New game to try this level again.');
+        this.board._say('<b>A draw.</b> Neither side found a way through. Try this level again.');
       }
       this._paint();
       multiples.update();
@@ -1430,7 +1432,9 @@
         rungs[i].classList.toggle('lost', r.w === 0 && r.l > 0);
       }
       $('play-status').textContent = 'level ' + (this.level + 1) + ' · ' + fmtInt(LADDER[this.level]) + ' imagined games per move';
-      $('play-new').textContent = this.board && this.board.history.length && !this.board.over ? 'Restart level ' + (this.level + 1) : 'Play level ' + (this.level + 1);
+      const midGame = this.board && this.board.history.length && !this.board.over;
+      $('play-new').textContent = midGame ? 'Restart level ' + (this.level + 1) : 'Play level ' + (this.level + 1);
+      $('play-new').classList.toggle('primary', !!(this.board && this.board.over));
       $('play-down').disabled = this.level === 0;
       $('play-up').disabled = this.level === LADDER.length - 1;
     },
@@ -2322,10 +2326,12 @@
       const played = rec.some((r) => r.w + r.l + r.d > 0);
       if (played) {
         const won = rec.map((r, i) => (r.w ? i : -1)).filter((i) => i >= 0);
-        const lost = rec.map((r, i) => (r.l ? i : -1)).filter((i) => i >= 0);
+        const maxWon = won.length ? Math.max(...won) : -1;
+        const lostAbove = rec.map((r, i) => (r.l && !r.w && i > maxWon ? i : -1)).filter((i) => i >= 0);
         const parts = [];
-        if (won.length) parts.push('You beat it at up to ' + fmtInt(LADDER[Math.max(...won)]) + ' imagined games per move.');
-        if (lost.length) parts.push('It beat you at ' + fmtInt(LADDER[Math.min(...lost.filter((i) => !won.length || i > Math.min(...won)).concat(lost))]) + '.');
+        if (maxWon >= 0) parts.push('You beat it at up to ' + fmtInt(LADDER[maxWon]) + ' imagined games per move.');
+        if (lostAbove.length) parts.push((maxWon >= 0 ? 'At ' : 'It beat you at ') + fmtInt(LADDER[Math.min(...lostAbove)]) + (maxWon >= 0 ? ', it beat you.' : ' imagined games per move.'));
+        if (!parts.length) parts.push('No decisive games yet.');
         $('mult-you-p').textContent = parts.join(' ');
       }
       const xs = race.crossings();
