@@ -319,6 +319,22 @@
   }
   let workersBroken = false;
 
+  // Workers normally load assets/js/worker.js. When the page is a single file
+  // with its scripts inlined, build the worker from those scripts instead.
+  let workerBlobUrl = null;
+  function makeWorker() {
+    const parts = ['src-connect', 'src-digits', 'src-rulebook', 'src-tasks'].map((id) => document.getElementById(id));
+    if (parts.every(Boolean)) {
+      if (!workerBlobUrl) {
+        const code = parts.map((e) => e.textContent).join('\n;\n') +
+          '\nself.onmessage = function (e) { self.BL.tasks.handle(e.data, function (m, t) { self.postMessage(m, t || []); }); };\n';
+        workerBlobUrl = URL.createObjectURL(new Blob([code], { type: 'text/javascript' }));
+      }
+      return new Worker(workerBlobUrl);
+    }
+    return new Worker(WORKER_URL);
+  }
+
   class Pool {
     constructor(size) {
       this.size = size;
@@ -332,7 +348,7 @@
     _spawn(slot) {
       let w = null;
       if (!workersBroken && typeof Worker !== 'undefined') {
-        try { w = new Worker(WORKER_URL); } catch (e) { w = null; workersBroken = true; }
+        try { w = makeWorker(); } catch (e) { w = null; workersBroken = true; }
       }
       if (!w) w = new LocalWorker();
       w.slot = slot;
@@ -710,6 +726,49 @@
     scale.onMeter();
   }).catch((e) => { console.error(e); $('scale-status').textContent = 'data unavailable'; });
 
+  // ================================================================ cost of computing
+  // Hardware cost per GFLOPS in 2025 dollars (Wikipedia, "FLOPS").
+  const COST = [
+    [1961, 201.171e9, 'IBM 7030'], [1984, 58.106e6, 'Cray X-MP/48'], [1997, 60168, 'Beowulf cluster'],
+    [2000, 1899, 'Bunyip cluster'], [2003, 147, 'KASY0'], [2007, 75.01, 'Microwulf'], [2011, 2.58, 'HPU4Science'],
+    [2017, 0.0359, '3 × Radeon RX Vega 64'], [2020, 0.0391, '3 × GeForce RTX 3080'], [2025, 0.0123, 'Radeon RX 9070 XT'],
+  ];
+  function fmtDollars(v) {
+    if (v >= 1e9) return '$' + Math.round(v / 1e9) + ' billion';
+    if (v >= 1e6) return '$' + Math.round(v / 1e6) + ' million';
+    if (v >= 1) return '$' + fmtInt(v);
+    return (v * 100).toFixed(1) + '¢';
+  }
+  const cost = { dirty: true };
+  cost.draw = function () {
+    const S = this.surface, ctx = S.fit(), w = S.w, h = S.h, P = palette();
+    const small = w < 520;
+    const A = new Axes(w, h, { l: small ? 40 : 52, r: small ? 14 : 24, t: 26, b: 30 }, { min: 1958, max: 2028 }, { min: 1e-3, max: 1e12, log: true });
+    const yt = [];
+    for (let e = -3; e <= 12; e++) yt.push({ v: Math.pow(10, e), label: null, strong: e % 3 === 0 });
+    const labels = { 1e12: '$1T', 1e9: '$1B', 1e6: '$1M', 1e3: '$1K', 1: '$1', 1e-3: '0.1¢' };
+    for (const t of yt) if (labels[t.v] != null) t.label = labels[t.v];
+    const xt = [];
+    for (let y = 1960; y <= 2020; y += small ? 20 : 10) xt.push({ v: y, label: String(y) });
+    A.grid(ctx, xt, yt);
+    A.titles(ctx, null, 'dollars per GFLOPS (log scale)', { yIndent: small ? 40 : 52 });
+    ctx.save();
+    ctx.strokeStyle = P.compute; ctx.lineWidth = 2.5; ctx.lineJoin = 'round';
+    ctx.beginPath();
+    COST.forEach((c, i) => { const x = A.tx(c[0]), y = A.ty(c[1]); if (i) ctx.lineTo(x, y); else ctx.moveTo(x, y); });
+    ctx.stroke();
+    for (const c of COST) { ctx.beginPath(); ctx.arc(A.tx(c[0]), A.ty(c[1]), 3.5, 0, Math.PI * 2); ctx.fillStyle = P.compute; ctx.fill(); }
+    ctx.restore();
+    const first = COST[0], last = COST[COST.length - 1];
+    label(ctx, first[0] + ': ' + fmtDollars(first[1]), A.tx(first[0]) + 6, A.ty(first[1]) + 17, { font: FONT.sans(small ? 11.5 : 12.5, 600), color: P.ink });
+    label(ctx, last[0] + ': ' + fmtDollars(last[1]), A.tx(last[0]) - 9, A.ty(last[1]) - 14, { align: 'right', font: FONT.sans(small ? 11.5 : 12.5, 600), color: P.ink });
+    if (!small) {
+      const mid = COST[2];
+      label(ctx, mid[0] + ': ' + fmtDollars(mid[1]), A.tx(mid[0]) + 9, A.ty(mid[1]) - 6, { font: FONT.sans(12, 500), color: P.ink2 });
+    }
+  };
+  cost.surface = new Surface($('cost-chart').querySelector('canvas'), cost);
+
   // ================================================================ code listings
   function highlight(src) {
     const esc = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -1078,6 +1137,7 @@
       this.say = opts.say;
       this.status = opts.status;
       this.onEnd = opts.onEnd || (() => {});
+      this.onMove = opts.onMove || (() => {});
       this.getSims = opts.getSims;
       this.rules = BL.normalizeRules(opts.rules || BL.STANDARD_RULES);
       this.humanFirst = opts.humanFirst !== false;
@@ -1152,6 +1212,7 @@
       if (this.game.toMove !== this.humanPlayer) return;
       if (!this.game.isLegal(m)) return;
       this._place(m);
+      this.onMove();
       if (this.game.result >= 0) { this._end(); return; }
       this._searcherTurn();
     }
@@ -1309,6 +1370,7 @@
         canvas: $('play-board'), say: $('play-say'),
         getSims: () => LADDER[this.level],
         onEnd: (o) => this._end(o),
+        onMove: () => { if (this.board.history.length <= 2) this._paint(); },
       });
       this.board.setRules(BL.STANDARD_RULES);
       const ladder = $('play-ladder');
@@ -1358,6 +1420,7 @@
         rungs[i].classList.toggle('lost', r.w === 0 && r.l > 0);
       }
       $('play-status').textContent = 'level ' + (this.level + 1) + ' · ' + fmtInt(LADDER[this.level]) + ' imagined games per move';
+      $('play-new').textContent = this.board && this.board.history.length && !this.board.over ? 'Restart level ' + (this.level + 1) : 'Play level ' + (this.level + 1);
       $('play-down').disabled = this.level === 0;
       $('play-up').disabled = this.level === LADDER.length - 1;
     },
@@ -1882,6 +1945,7 @@
       ictx.clearRect(0, 0, 28, 28);
       if (!px) {
         $('v-rb').textContent = '–'; $('v-fe').textContent = '–'; $('v-cnn').textContent = '–';
+        $('s-rb').textContent = '–'; $('s-fe').textContent = '–'; $('s-cnn').textContent = '–';
         for (const id of ['v-rb', 'v-fe', 'v-cnn']) $(id).classList.add('empty');
         $('v-rb-why').textContent = 'Waiting for a digit.';
         $('v-fe-why').textContent = ''; $('v-cnn-why').textContent = '';
@@ -1906,6 +1970,7 @@
         try {
           const r = BL.rulebook.classify(px);
           $('v-rb').textContent = String(r.digit);
+          $('s-rb').textContent = String(r.digit);
           const why = $('v-rb-why');
           why.innerHTML = '';
           for (const line of (r.trace || []).slice(0, 5)) { const d = document.createElement('div'); d.textContent = line; why.appendChild(d); }
@@ -1920,16 +1985,18 @@
         BL.digits.softmaxInPlace(z, 10);
         let b = 0; for (let k = 1; k < 10; k++) if (z[k] > z[b]) b = k;
         $('v-fe').textContent = String(b);
+        $('s-fe').textContent = String(b);
         this._bars('v-fe-bars', z);
         $('v-fe-why').textContent = pct(z[b]) + ' sure' + (race.feDone ? '' : ' · still training');
       } else {
-        $('v-fe').textContent = '?'; this._bars('v-fe-bars', null);
+        $('v-fe').textContent = '?'; $('s-fe').textContent = '?'; this._bars('v-fe-bars', null);
         $('v-fe-why').textContent = 'Untrained. Its classifier learns in Experiment 3.';
       }
       // Learner
       const z = race.net.predict(px);
       let b = 0; for (let k = 1; k < 10; k++) if (z[k] > z[b]) b = k;
       $('v-cnn').textContent = String(b);
+      $('s-cnn').textContent = String(b);
       this._bars('v-cnn-bars', z);
       $('v-cnn-why').textContent = race.seen ? pct(z[b]) + ' sure · trained on ' + fmtInt(race.seen) + ' examples' : 'Untrained: random weights. It learns in Experiment 3.';
     },

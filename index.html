@@ -193,11 +193,13 @@ canvas { display: block; width: 100%; touch-action: manipulation; }
 .ratio-hero { aspect-ratio: 16 / 7; min-height: 15rem; }
 .ratio-wide { aspect-ratio: 16 / 8; min-height: 17rem; }
 .ratio-scale { aspect-ratio: 16 / 9; }
+.ratio-cost { aspect-ratio: 16 / 6.5; min-height: 12rem; }
 .ratio-diary { aspect-ratio: 16 / 7; min-height: 14rem; }
 @media (max-width: 40rem) {
   .ratio-hero, .ratio-wide { aspect-ratio: auto; height: 21rem; }
   .ratio-scale { aspect-ratio: auto; height: 26rem; }
   .ratio-diary { aspect-ratio: auto; min-height: 0; height: 17rem; }
+  .ratio-cost { aspect-ratio: auto; min-height: 0; height: 15rem; }
 }
 .tip {
   position: absolute; pointer-events: none; z-index: 5;
@@ -357,6 +359,14 @@ button.primary:hover:not(:disabled) { background: var(--ink-2); border-color: va
 .drawpad { position: relative; width: 100%; max-width: 17rem; margin-inline: auto; }
 .drawpad canvas { aspect-ratio: 1; height: auto; border-radius: 4px; background: #05070a; touch-action: none; cursor: crosshair; }
 .drawpad .hint { position: absolute; inset: 0; display: grid; place-items: center; color: #8790a0; font-family: var(--sans); font-size: .95rem; pointer-events: none; }
+.strip { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .4rem; text-align: center; }
+.strip div { background: var(--panel); border: 1px solid var(--rule); border-radius: 4px; padding: .4rem .2rem .35rem; display: grid; gap: .1rem; }
+.strip span { font-family: var(--sans); font-size: .72rem; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; }
+.strip b { font-family: var(--mono); font-size: 1.7rem; font-weight: 500; line-height: 1.1; }
+.strip .k span { color: var(--knowledge-ink); }
+.strip .h span { color: var(--hybrid); }
+.strip .c span { color: var(--compute-ink); }
+@media (min-width: 56rem) { .strip { display: none; } }
 .verdicts { display: grid; gap: .6rem; }
 @media (min-width: 40rem) { .verdicts { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
 .verdict { padding: .8rem .85rem; display: grid; gap: .35rem; align-content: start; }
@@ -437,7 +447,7 @@ footer.colophon { border-top: 1px solid var(--rule); margin-top: 3rem; padding-b
     <div class="meter" id="meter" title="Work this page has done on your device">
       <span class="dot" aria-hidden="true"></span>
       <span><span class="num" id="m-pos">0</span> positions imagined</span>
-      <span class="flopwrap"><span class="sep">·</span> <span class="num" id="m-flop">0</span> FLOP learned</span>
+      <span class="flopwrap"><span class="sep">·</span> <span class="num" id="m-flop">0</span> FLOP spent learning</span>
     </div>
   </div>
 </header>
@@ -460,7 +470,11 @@ footer.colophon { border-top: 1px solid var(--rule); margin-top: 3rem; padding-b
 
 <!-- =============================================================== PROLOGUE -->
 <section class="col" id="pattern">
-  <p>Why would computation win? Sutton gives one reason: its price keeps collapsing. A billion floating-point operations per second cost about $18.7 billion of hardware in 1961 and about a cent in 2025. Over any stretch longer than a research project, far more computation shows up than anyone planned for. A method that turns extra computation into better results rides that curve. A method built from what its authors know does not, because knowledge doesn't get cheaper every year.</p>
+  <p>Why would computation win? Sutton gives one reason: its price keeps collapsing. In 1961 a billion floating-point operations per second would have cost about $200 billion in today's money. In 2025 it cost about a cent. Over any stretch longer than a research project, far more computation shows up than anyone planned for. A method that turns extra computation into better results rides that curve. A method built from what its authors know does not, because knowledge doesn't get cheaper every year.</p>
+  <figure class="figure" id="cost-fig">
+    <div class="panel"><div class="chart ratio-cost" id="cost-chart"><canvas aria-label="Price of one billion floating-point operations per second from 1961 to 2025, falling from about 200 billion dollars to about one cent"></canvas></div></div>
+    <figcaption class="figcap"><strong>The price of a gigaflop.</strong> Hardware cost of one billion floating-point operations per second, in 2025 dollars, on a logarithmic scale: thirteen orders of magnitude in sixty-four years. Data: Wikipedia's cost-of-computing table (the 2017 and later machines use lower-precision arithmetic).</figcaption>
+  </figure>
   <p>Sutton noticed the same four-step story repeating through AI's history:</p>
   <ol class="pattern">
     <li>AI researchers have often tried to build knowledge into their agents,</li>
@@ -551,7 +565,7 @@ footer.colophon { border-top: 1px solid var(--rule); margin-top: 3rem; padding-b
 
   <div class="col">
     <p>At each level of the tournament the Searcher gets four times as many imagined games per move as before and plays 32 games against the Expert, half of them moving first. Openings are randomised, two moves deep, and each opening is played once from each side. The Expert never changes. It can't: there is no dial on knowledge.</p>
-    <p>Look at what the Searcher never learns. Nobody tells it the centre matters, or that threats on odd rows are worth more, or that you shouldn't play under your opponent's threat. It works out what it needs, again, before every single move, by sheer volume of imagination. That is exactly what disappointed the chess researchers of 1997. “Brute force” may have won, they said, but it was not a general strategy, and anyway it was not how people played chess.</p>
+    <p>Look at what the Searcher never learns. Nobody tells it the centre matters, or that threats on odd rows are worth more, or that you shouldn't play under your opponent's threat. It works out what it needs, again, before every single move, by sheer volume of imagination. That is exactly what disappointed the chess researchers of 1997. In Sutton's telling, “they said that ‘brute force’ search may have won this time, but it was not a general strategy, and anyway it was not how people played chess.”</p>
     <h3>Your turn</h3>
     <p>You know some Connect Four too. Play the Searcher. You go first, which in this game is a real advantage. Every time you win, it gets four times more imagination per move.</p>
   </div>
@@ -594,7 +608,7 @@ footer.colophon { border-top: 1px solid var(--rule); margin-top: 3rem; padding-b
       <h2>Three ways to read a digit</h2>
     </div>
     <p>Search is one way to spend computation. Learning is the other.</p>
-    <p>Speech recognition went through the lesson in the 1970s. In DARPA's speech-understanding program, Carnegie Mellon's Harpy, a precompiled network of word sounds searched with brute force, met the program's goals. Hearsay-II, an elegant “blackboard” of cooperating knowledge sources, did not. Statistical models such as hidden Markov models took over the field in the following decade. Fred Jelinek, who ran IBM's speech group, recalled a remark of his from 1988: “Whenever I fire a linguist our system performance improves.”</p>
+    <p>Speech recognition went through the lesson in the 1970s. In DARPA's speech-understanding program, Carnegie Mellon's Harpy, which compiled every sentence it could hear into one big network and searched it, met the program's goals. Hearsay-II, a “blackboard” on which separate experts in acoustics, phonetics, syntax and meaning pooled their knowledge, did not. Statistical models such as hidden Markov models took over the field in the following decade. Fred Jelinek, who ran IBM's speech group, recalled a remark of his from 1988: “Whenever I fire a linguist our system performance improves.”</p>
     <p>Vision followed. For decades researchers designed edge detectors and features by hand, with names like SIFT and HOG. In 2012 a learned network, AlexNet, won the ImageNet challenge with a 15.3% top-5 error rate; the runner-up, built on hand-designed features, had 26.2%. “Today all this is discarded,” Sutton wrote.</p>
     <p>Here are three programs that read handwritten digits, one from each era.</p>
   </div>
@@ -615,7 +629,7 @@ footer.colophon { border-top: 1px solid var(--rule); margin-top: 3rem; padding-b
       <article class="who c">
         <span class="tag"><span class="swatch"></span>Computation</span>
         <h4>The Learner</h4>
-        <p>A small convolutional network. It starts as about 6,000 random numbers and is told only that nearby pixels belong together. Everything else, including what an edge is, it has to learn from examples, one gradient step at a time.</p>
+        <p>A small convolutional network. It starts as about 6,000 random numbers and is told only that nearby pixels belong together and that a pattern means the same thing wherever it appears. Everything else, including what an edge is, it has to learn from examples, one gradient step at a time.</p>
         <div class="facts"><span id="cnn-params">6,000 learned weights</span><span>no features given</span></div>
       </article>
     </div>
@@ -666,7 +680,7 @@ footer.colophon { border-top: 1px solid var(--rule); margin-top: 3rem; padding-b
       <div class="panel"><div class="chart ratio-diary" id="diary-chart"><canvas aria-label="The Rulebook's accuracy after each revision"></canvas></div></div>
       <figcaption class="figcap" id="diary-cap"><strong>Knowledge engineering, measured.</strong> Accuracy of the Rulebook after each revision, on development digits.</figcaption>
     </figure>
-    <p id="diary-after">Each new rule fixed a dozen digits and broke a few others, and the curve went flat. Speed was never the problem: the flat part came after the AI had tried everything it could think of. The problem is the method. Every rule is a guess about how people recognise digits, and handwriting is more varied than any list of guesses.</p>
+    <p id="diary-after">Each new rule fixed a dozen digits and broke a few others, and the curve went flat. Speed wasn't the problem: the AI wrote and tested a new rule every minute or so. The problem is the method. Every rule is a guess about how people recognise digits, and handwriting is more varied than any list of guesses.</p>
     <h3>Draw a digit</h3>
     <p>Draw any digit and all three programs will read it. The Rulebook shows its reasoning, and the skeleton it reasons about. The Learner reads with whatever it has learned so far, so if training hasn't started, it is guessing.</p>
   </div>
@@ -684,6 +698,11 @@ footer.colophon { border-top: 1px solid var(--rule); margin-top: 3rem; padding-b
           <div class="controls" style="justify-content:center">
             <button id="draw-clear">Clear</button>
             <button id="draw-sample">Show me a test digit</button>
+          </div>
+          <div class="strip" aria-hidden="true">
+            <div class="k"><span>Rulebook</span><b id="s-rb">–</b></div>
+            <div class="h"><span>Features</span><b id="s-fe">–</b></div>
+            <div class="c"><span>Learner</span><b id="s-cnn">–</b></div>
           </div>
         </div>
         <div class="verdicts">
@@ -705,7 +724,7 @@ footer.colophon { border-top: 1px solid var(--rule); margin-top: 3rem; padding-b
     </div>
     <p>Sutton's second point is the deeper one:</p>
     <blockquote>“The actual contents of minds are tremendously, irredeemably complex … They are not what should be built in, as their complexity is endless; instead we should build in only the meta-methods that can find and capture this arbitrary complexity.”<footer class="cite">Rich Sutton, The Bitter Lesson</footer></blockquote>
-    <p>Knowledge is always knowledge of a particular world. The Searcher's method is about any world that has rules. So let's change the world. Below, the Expert and the Searcher meet again under rules neither has seen. The Searcher thinks at the same budget for every variant. Its code doesn't change. The Expert's code still runs, but its knowledge was written for one game.</p>
+    <p>Knowledge is always knowledge of a particular world. The Searcher's method is about any world that has rules. So let's change the world. Below, the Expert and the Searcher meet again, first on the Expert's home ground and then under four rule changes. The Searcher gets the same budget everywhere, 1,024 imagined games per move, and its code doesn't change. The Expert's code still runs, but its knowledge was written for one game.</p>
   </div>
 
   <div class="bench" id="vary">
@@ -730,7 +749,7 @@ footer.colophon { border-top: 1px solid var(--rule); margin-top: 3rem; padding-b
   </div>
 
   <div class="col">
-    <p>Not every change breaks the Expert. Some of its knowledge is general: counting your open lines is a decent idea in any game of this family. But someone has to check, rule by rule, and rewrite what no longer holds. In misère, where four in a row loses, every piece of its wisdom points the wrong way. Without gravity it can't even move, because its code assumes pieces fall. The Searcher needed only to be told the rules.</p>
+    <p>Not every change breaks the Expert. Some of its knowledge is general: counting your open lines is a decent idea in any game of this family, and on the bigger board it can hold off a Searcher limited to 1,024 imagined games per move. When that happens, the Searcher's fix is the one it always has: more computation. The Expert's fix is a person, checking every rule and rewriting the ones that no longer hold. In misère, where four in a row loses, every piece of its wisdom points the wrong way. Without gravity it can't even move, because its code assumes pieces fall.</p>
     <h3>Invent a game</h3>
     <p>Make up your own rules. The Searcher has never seen your game and has no strategy for it, yet it will play it well from its first move, because it works out strategy from the rules at the moment it needs it.</p>
   </div>
@@ -772,7 +791,7 @@ footer.colophon { border-top: 1px solid var(--rule); margin-top: 3rem; padding-b
       <span class="numeral">IV · Scale</span>
       <h2>Where this page sits</h2>
     </div>
-    <p>Everything above ran on one consumer device in a few minutes. That would have been unthinkable for most of the history on this chart. The markers labelled “this page” show the computation your device has spent here so far, placed against the training runs of the systems that made AI history.</p>
+    <p>Everything above ran on one consumer device in a few minutes. That would have been unthinkable for most of the history on this chart. The marker labelled “this page” shows the computation your device has spent on learning here so far, placed against the training runs of the systems that made AI history.</p>
   </div>
   <div class="bench" id="scale-bench">
     <div class="wide">
@@ -787,8 +806,8 @@ footer.colophon { border-top: 1px solid var(--rule); margin-top: 3rem; padding-b
     </div>
   </div>
   <div class="col">
-    <p>Not everyone bet on computation. In 1984 Doug Lenat began Cyc, a project to write down common sense by hand, one assertion at a time. Its 1985 plan estimated about 150 person-years. In 2023 Lenat and Gary Marcus put the effort at four decades, roughly 2,000 person-years and tens of millions of hand-authored assertions. Much of that common sense is now picked up from text by language models trained on the right of this chart.</p>
-    <p>Sutton doesn't think language models settle the matter either. They are “clearly a way of using massive computation,” he said in 2025, “but they're also a way of putting in lots of human knowledge,” namely everything people wrote. He expects systems that learn from their own experience to overtake them. The lesson, in other words, is still being learned.</p>
+    <p>Not everyone bet on computation. In 1984 Doug Lenat began Cyc, a project to write down common sense by hand, one assertion at a time. Its 1985 plan estimated about 150 person-years. In 2023 Lenat and Gary Marcus put the effort at four decades, roughly 2,000 person-years and tens of millions of hand-authored assertions. Today the language models at the top right of this chart pick up much of that common sense from text instead.</p>
+    <p>Sutton doesn't think language models settle the matter either. They “are clearly a way of using massive computation,” he said in 2025. “But they're also a way of putting in lots of human knowledge”: everything people have written. He expects systems that learn from their own experience to overtake them. The lesson is still being learned.</p>
   </div>
 </section>
 
@@ -812,7 +831,7 @@ footer.colophon { border-top: 1px solid var(--rule); margin-top: 3rem; padding-b
     <blockquote>“We want AI agents that can <em>discover</em> like we can, not which contain what we have discovered. Building in our discoveries only makes it harder to see how the discovering process can be done.”</blockquote>
     <p class="cite">Rich Sutton, <a href="http://www.incompleteideas.net/IncIdeas/BitterLesson.html">The Bitter Lesson</a>, March 13, 2019</p>
     <p style="margin-top:2rem">The bitterness is in whose knowledge loses. The Expert's rules, the Rulebook's loops and the Feature Engineer's edges are good human insights, carefully written down, and they really do help at first. Then the clock runs, the computation arrives, and a method that knows less wins. Sutton calls it a success “tinged with bitterness, and often incompletely digested, because it is success over a favored, human-centric approach.”</p>
-    <p>This page was built overnight by an AI model, itself a product of the lesson. Nobody wrote its knowledge in. It wrote the Expert and the Rulebook by hand anyway, as a fair opponent, and then watched them lose.</p>
+    <p>This page was built by an AI model, which is itself a product of the lesson: what it knows was learned from data with enormous computation, not written down by hand. It still wrote the Expert and the Rulebook by hand, to give computation a fair opponent, and then watched them lose.</p>
   </div>
 
   <div class="col methods" id="methods">
@@ -821,7 +840,7 @@ footer.colophon { border-top: 1px solid var(--rule); margin-top: 3rem; padding-b
     <p><b>Training race.</b> 12,000 training images sampled at random (seed 1957) from MNIST's 60,000, and all 10,000 MNIST test images. Points along the way are measured on a fixed random 2,500 of the test images; each program's final point uses all 10,000. The Learner is a convolutional network (5×5 convolutions with 8 and then 16 filters, ReLU, 2×2 max-pooling, a linear output layer) trained with Adam at batch size 32, learning rate 0.003 with cosine decay, for 8 epochs, with its minibatch gradients computed in parallel across your device's cores. The Feature Engineer uses HOG features (4×4-pixel cells, 9 orientation bins, 2×2-cell blocks with L2-Hys normalisation, 1,296 numbers per image) and multinomial logistic regression trained the same way for 12 epochs. FLOP counts are analytic: a multiply-add counts as two operations, and the forward pass, backward pass and feature extraction are all counted. Evaluation is not. Neither program sees shifted or distorted copies of the data.</p>
     <p><b>Rulebook.</b> Written by hand for this page, with no fitted parameters: thresholds were set by looking at development digits, which were drawn only from the training set.</p>
     <p><b>New worlds.</b> Each variant is a 24-game match at 1,024 imagined games per move, over random two-move openings with sides swapped. If the Searcher scores under 50%, it plays another 24 games with four times the imagination.</p>
-    <p><b>Compute counts.</b> “Positions imagined” counts every piece placed in an imagined game, plus the Expert's moves. “FLOP learned” counts training operations in Experiment 3.</p>
+    <p><b>Compute counts.</b> “Positions imagined” counts every piece placed in an imagined game, plus the Expert's moves. “FLOP spent learning” counts training operations in Experiment 3.</p>
     <h3>Sources</h3>
     <ul>
       <li>Rich Sutton, <a href="http://www.incompleteideas.net/IncIdeas/BitterLesson.html">The Bitter Lesson</a> (2019). All quotations from the essay are verbatim.</li>
@@ -831,7 +850,7 @@ footer.colophon { border-top: 1px solid var(--rule); margin-top: 3rem; padding-b
       <li>ImageNet 2012 results: image-net.org. HOG: Dalal and Triggs, CVPR 2005.</li>
       <li>Connect Four: Allis, <i>A Knowledge-Based Approach of Connect-Four</i> (1988). MCTS: Coulom (2006); Kocsis and Szepesvári (2006).</li>
       <li>Cyc: Lenat et al. (1985); Lenat and Marcus (2023). Sutton on language models: Dwarkesh Podcast, September 2025.</li>
-      <li>Cost of computing: Wikipedia, “FLOPS”, cost-of-computing table (unadjusted dollars).</li>
+      <li>Cost of computing: Wikipedia, “FLOPS”, cost-of-computing table, inflation-adjusted to 2025 dollars ($201 billion per GFLOPS in 1961; 1.23 cents in 2025).</li>
       <li>Handwritten digits: the MNIST database of LeCun, Cortes and Burges.</li>
     </ul>
   </div>
