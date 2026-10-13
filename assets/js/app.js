@@ -51,6 +51,7 @@
     return m + ' min ' + Math.round(s - m * 60) + ' s';
   }
   const pct = (x) => Math.round(x * 100) + '%';
+  const sig2 = (x) => { if (!(x > 0)) return 0; const p = Math.pow(10, Math.floor(Math.log10(x)) - 1); return Math.round(x / p) * p; };
   const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
   const lerp = (a, b, t) => a + (b - a) * t;
   const easeOut = (t) => 1 - Math.pow(1 - clamp(t, 0, 1), 3);
@@ -449,7 +450,13 @@
   async function fetchBinary(url) {
     const res = await fetch(url);
     if (!res.ok) throw new Error('Could not load ' + url + ' (' + res.status + ')');
-    let buf = await res.arrayBuffer();
+    let buf;
+    if (/\.b64\.txt$/.test(url)) { // some hosts only serve text: base64 inside
+      const bin = atob((await res.text()).trim());
+      const bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      buf = bytes.buffer;
+    } else buf = await res.arrayBuffer();
     const b = new Uint8Array(buf, 0, 2);
     if (b[0] === 0x1f && b[1] === 0x8b) {
       if (typeof DecompressionStream === 'undefined') throw new Error('This browser cannot unpack the digit data.');
@@ -698,17 +705,20 @@
       const flop = meter.flops;
       const marks = [];
       if (flop > 0) {
-        // the most recent notable system that trained with no more than this
-        let match = null;
-        for (const m of this.chart.models) if (Math.pow(10, m[4]) <= flop * 1.0001 && m[2] < 2005 && (!match || m[4] > match[4])) match = m;
-        marks.push({ year: 2026.8, flop, label: 'this page', match });
+        const ms = this.chart.models.filter((m) => this.chart.milestones[m[0]]).sort((a, b) => a[4] - b[4]);
+        const lf = Math.log10(flop);
+        let below = null, above = null;
+        for (const m of ms) { if (m[4] <= lf) below = m; else if (!above) above = m; }
+        marks.push({ year: 2026.8, flop, label: 'this page', match: below });
         const top = this.chart.models.reduce((a, m) => (m[4] > a[4] ? m : a));
         const ratio = Math.pow(10, top[4]) / flop;
-        const r = $('scale-result');
-        const firstSentence = match
-          ? 'So far this page has spent ' + fmtSci(flop) + ' FLOP on learning, about the training budget of ' + match[0] + ' (' + Math.floor(match[2]) + ').'
-          : 'So far this page has spent ' + fmtSci(flop) + ' FLOP on learning.';
-        r.textContent = firstSentence + ' The largest training runs in the data, from ' + Math.floor(top[2]) + ', used about ' + fmtSci(ratio, 0).replace(/^1×/, '') + ' times as much.';
+        const name = (m) => this.chart.milestones[m[0]] + ' (' + Math.floor(m[2]) + ', ' + fmtSci(Math.pow(10, m[4])) + ')';
+        let txt = 'So far this page has spent ' + fmtSci(flop) + ' FLOP on learning';
+        if (below && above) txt += ', between ' + name(below) + ' and ' + name(above) + '.';
+        else if (below) txt += ', more than ' + name(below) + '.';
+        else txt += '.';
+        txt += ' The largest training runs in the data, from ' + Math.floor(top[2]) + ', used about ' + fmtSci(ratio, 0).replace(/^1×/, '') + ' times as much.';
+        $('scale-result').textContent = txt;
       }
       this.chart.marks = marks;
       invalidate(this.chart);
@@ -1013,7 +1023,7 @@
       if (!top) { el.textContent = ''; return; }
       const parts = [];
       if (x) {
-        parts.push('The Searcher drew level with the Expert at about ' + fmtInt(Math.round(x.sims / 10) * 10 || x.sims) + ' imagined games per move' + (x.msPerMove ? ', roughly ' + fmtTime(x.msPerMove) + ' of thinking per move on this device.' : '.'));
+        parts.push('The Searcher drew level with the Expert at about ' + fmtInt(sig2(x.sims)) + ' imagined games per move' + (x.msPerMove ? ', roughly ' + fmtTime(x.msPerMove) + ' of thinking per move on this device.' : '.'));
       } else if (this.rate(top) < 0.5) {
         parts.push('The Searcher has not caught the Expert yet.');
       }
@@ -1109,7 +1119,7 @@
       ctx.setLineDash([]);
       ctx.beginPath(); ctx.arc(cx, A.ty(0.5), compact ? 5 : 7, 0, Math.PI * 2); ctx.lineWidth = 1.5; ctx.stroke();
       ctx.restore();
-      const txt = compact ? 'crossover' : 'crossover · ≈' + fmtInt(Math.round(x.sims)) + ' per move';
+      const txt = compact ? 'crossover' : 'crossover · ≈' + fmtInt(sig2(x.sims)) + ' per move';
       label(ctx, txt, cx + 8, A.t + 10, { font: FONT.sans(compact ? 10 : 12.5, 600), color: P.ink });
     }
     if (!compact) {
@@ -2117,29 +2127,51 @@
       VARIANTS.forEach((v) => {
         const el = document.createElement('div');
         el.className = 'panel variant';
-        el.innerHTML = '<div><div class="name"></div><div class="desc"></div></div><div class="barcell"></div><div class="scoretxt"></div>';
+        el.innerHTML = '<div><div class="name"></div><div class="desc"></div></div><div class="rows"></div>';
         el.querySelector('.name').textContent = v.name;
         el.querySelector('.desc').textContent = v.desc;
-        const cell = el.querySelector('.barcell');
-        if (v.rules.gravity === false) {
-          cell.innerHTML = '<div class="na">The Expert can\'t play this: its code assumes pieces fall. Someone would have to write a new Expert.</div>';
-        } else {
-          cell.innerHTML = '<div class="bars2"><div class="scorebar"><div class="s" style="width:0%"></div><div class="e" style="width:0%"></div><div class="mid"></div></div></div>';
-        }
-        list.appendChild(el);
         v.el = el;
+        v.rows = el.querySelector('.rows');
+        this._resetRows(v);
+        list.appendChild(el);
       });
       $('vary-run').addEventListener('click', () => (this.running ? this.stop() : this.start()));
       whenSeen($('vary'), () => { if (!this.running && !this.started) this.start(); }, 0.3);
     },
-    _match(vi, sims, R, rng) {
+    _resetRows(v) {
+      v.rows.innerHTML = '';
+      v.bars = [];
+      if (v.rules.gravity === false) {
+        v.rows.innerHTML = '<div class="vrow"><div class="na">The Expert can\'t play this: its code assumes pieces fall. Someone would have to write a new Expert.</div><div class="scoretxt">no match</div></div>';
+        return;
+      }
+      this._addRow(v, null);
+    },
+    _addRow(v, sims) {
+      if (sims) {
+        const lab = document.createElement('div');
+        lab.className = 'boostlab';
+        lab.textContent = 'Not enough? Four times the imagination: ' + fmtInt(sims) + ' per move.';
+        v.rows.appendChild(lab);
+      }
+      const row = document.createElement('div');
+      row.className = 'vrow';
+      row.innerHTML = '<div class="scorebar"><div class="s" style="width:0%"></div><div class="e" style="width:0%"></div><div class="mid"></div></div><div class="scoretxt">–</div>';
+      v.rows.appendChild(row);
+      v.bars.push(row);
+    },
+    // One match: 24 games over 12 random openings. If the Searcher loses it,
+    // its answer is the general method's answer: more computation.
+    _match(vi, sims, rng, depth) {
       const v = VARIANTS[vi];
       const rules = BL.normalizeRules(Object.assign({}, BL.STANDARD_RULES, v.rules));
+      const R = { sims, score: 0, n: 0, planned: VARY_OPENINGS * 2 };
+      this.results[vi].push(R);
+      const row = depth;
       for (let o = 0; o < VARY_OPENINGS; o++) {
         const g = new BL.Game(rules), opening = [];
         for (let k = 0; k < 2; k++) { const m = g.moves[rng() % g.nMoves]; g.play(m); opening.push(m); }
         for (const first of [true, false]) {
-          R.planned++;
           this.outstanding++;
           this.pool.run({ type: 'c4Game', rules, sims, mctsFirst: first, seed: rng(), opening, c: 0.5 }, (m) => {
             if (m.type === 'work') meter.add(m.positions, 0);
@@ -2148,53 +2180,30 @@
             if (m.type === 'done') {
               meter.add(m.positions, 0);
               R.score += m.score; R.n++;
-              // Not enough? The general method's answer is more computation.
-              if (!R.boosted && R.n === R.planned && R.score / R.n < 0.5 && this.running) {
-                R.boosted = true;
-                const B = { sims: sims * 4, score: 0, n: 0, planned: 0, boosted: true };
-                R.boost = B;
-                this._addBoostBar(vi, B);
-                this._match(vi, B.sims, B, rng);
+              this._paintRow(v.bars[row], R);
+              if (R.n === R.planned && R.score / R.n < 0.5 && depth < 2 && this.running) {
+                this._addRow(v, sims * 4);
+                this._match(vi, sims * 4, rng, depth + 1);
               }
-              this._paint(vi);
+              this._status();
             }
             if (this.outstanding === 0) this._finish();
           });
         }
       }
     },
-    _addBoostBar(vi, B) {
-      const v = VARIANTS[vi];
-      const box = v.el.querySelector('.bars2');
-      const lab = document.createElement('div');
-      lab.className = 'boostlab';
-      lab.textContent = 'with four times the imagination (' + fmtInt(B.sims) + ' per move):';
-      const bar = document.createElement('div');
-      bar.className = 'scorebar boost';
-      bar.innerHTML = '<div class="s" style="width:0%"></div><div class="e" style="width:0%"></div><div class="mid"></div>';
-      box.appendChild(lab);
-      box.appendChild(bar);
-      const t = document.createElement('div');
-      t.className = 'boosttxt';
-      v.el.querySelector('.scoretxt').appendChild(t);
-    },
     start() {
       this.started = true;
       this.running = true;
       $('vary-run').textContent = 'Stop';
       $('vary-result').textContent = '';
-      this.results = VARIANTS.map(() => ({ score: 0, n: 0, planned: 0 }));
-      for (const v of VARIANTS) {
-        const box = v.el.querySelector('.bars2');
-        if (box) { while (box.children.length > 1) box.removeChild(box.lastChild); }
-        const st = v.el.querySelector('.scoretxt');
-        st.innerHTML = '';
-      }
+      this.results = VARIANTS.map(() => []);
+      VARIANTS.forEach((v) => this._resetRows(v));
       this.pool = new Pool(WORKERS);
       this.outstanding = 0;
       const rng = BL.makeRng((Math.random() * 4e9) >>> 0);
-      VARIANTS.forEach((v, vi) => { if (v.rules.gravity !== false) this._match(vi, VARY_SIMS, this.results[vi], rng); });
-      this._paint();
+      VARIANTS.forEach((v, vi) => { if (v.rules.gravity !== false) this._match(vi, VARY_SIMS, rng, 0); });
+      this._status();
     },
     stop() { this._finish(true); },
     _finish(stopped) {
@@ -2205,38 +2214,27 @@
       $('vary-status').textContent = stopped ? 'stopped' : 'finished';
       const R = this.results;
       const f = (r) => (r && r.n ? pct(r.score / r.n) : '–');
-      if (!stopped && R[0].n && R[1].n) {
-        let txt = 'At ' + fmtInt(VARY_SIMS) + ' imagined games per move the Searcher scored ' + f(R[0]) + ' at home. With one rule flipped (misère) it scored ' + f(R[1]) + ', with the same code and the same budget. On the cylinder, ' + f(R[2]) + '.';
-        const k5 = R[3];
-        if (k5.boost && k5.boost.n) txt += ' On the bigger board, five in a row, ' + fmtInt(VARY_SIMS) + ' was not enough (' + f(k5) + '), so it got four times as much and scored ' + f(k5.boost) + '. Nobody had to rewrite anything.';
-        else if (k5.n) txt += ' Five in a row on the bigger board: ' + f(k5) + '.';
-        $('vary-result').textContent = txt;
-      }
+      if (stopped || !R[0].length || !R[1].length) return;
+      let txt = 'At ' + fmtInt(VARY_SIMS) + ' imagined games per move the Searcher scored ' + f(R[0][0]) + ' at home. With one rule flipped (misère) it scored ' + f(R[1][0]) + ', with the same code and the same budget. On the cylinder, ' + f(R[2][0]) + '.';
+      const k5 = R[3];
+      if (k5.length > 1) {
+        const last = k5[k5.length - 1];
+        txt += ' On the bigger board, five in a row, ' + fmtInt(VARY_SIMS) + ' was not enough (' + f(k5[0]) + '). ' +
+          k5.slice(1).map((r) => 'At ' + fmtInt(r.sims) + ' it scored ' + f(r)).join('; ') + '.';
+        txt += last.score / last.n >= 0.5 ? ' Nobody had to rewrite anything.' : ' It needs still more computation on this board, but nobody has to rewrite anything to give it that.';
+      } else if (k5.length) txt += ' Five in a row on the bigger board: ' + f(k5[0]) + '.';
+      $('vary-result').textContent = txt;
     },
-    _paintBar(bar, R) {
+    _paintRow(row, R) {
       const s = R.n ? R.score / R.n : 0;
-      bar.querySelector('.s').style.width = (R.n ? s * 100 : 0) + '%';
-      bar.querySelector('.e').style.width = (R.n ? (1 - s) * 100 : 0) + '%';
-      return R.n ? pct(s) + ' · ' + R.n + '/' + R.planned : '–';
+      row.querySelector('.s').style.width = (R.n ? s * 100 : 0) + '%';
+      row.querySelector('.e').style.width = (R.n ? (1 - s) * 100 : 0) + '%';
+      row.querySelector('.scoretxt').textContent = R.n ? pct(s) + ' · ' + R.n + '/' + R.planned : '–';
     },
-    _paint(only) {
-      VARIANTS.forEach((v, i) => {
-        if (only != null && i !== only) return;
-        const R = this.results[i];
-        const st = v.el.querySelector('.scoretxt');
-        if (v.rules.gravity === false) { st.textContent = 'no match'; return; }
-        if (!R) return;
-        const bars = v.el.querySelectorAll('.scorebar');
-        let main = st.querySelector('.maintxt');
-        if (!main) { main = document.createElement('div'); main.className = 'maintxt'; st.prepend(main); }
-        main.textContent = this._paintBar(bars[0], R);
-        if (R.boost && bars[1]) {
-          const bt = st.querySelector('.boosttxt');
-          if (bt) bt.textContent = this._paintBar(bars[1], R.boost);
-        }
-      });
-      const all = this.results.reduce((a, r) => { a.n += r.n + (r.boost ? r.boost.n : 0); a.p += r.planned + (r.boost ? r.boost.planned : 0); return a; }, { n: 0, p: 0 });
-      if (this.running) $('vary-status').textContent = all.n + ' of ' + all.p + ' games';
+    _status() {
+      let n = 0, p = 0;
+      for (const list of this.results) for (const r of list) { n += r.n; p += r.planned; }
+      if (this.running) $('vary-status').textContent = n + ' of ' + p + ' games';
     },
   };
 
@@ -2318,7 +2316,7 @@
       const x = tour.computeCrossover();
       if (tour.games) {
         const top = tour.levels.filter((L) => L.n > 0).pop();
-        $('mult-tour-p').textContent = (x ? 'Crossover at ≈' + fmtInt(Math.round(x.sims)) + ' imagined games per move. ' : '') + 'Searcher at ' + fmtInt(top.sims) + ': ' + pct(tour.rate(top)) + '.';
+        $('mult-tour-p').textContent = (x ? 'Crossover at ≈' + fmtInt(sig2(x.sims)) + ' imagined games per move. ' : '') + 'Searcher at ' + fmtInt(top.sims) + ': ' + pct(tour.rate(top)) + '.';
       }
       const rec = play.record;
       const played = rec.some((r) => r.w + r.l + r.d > 0);

@@ -8,6 +8,8 @@ supporting files are published alongside under the same paths.
 
 usage: build_artifact.py index.html OUT.html
 """
+import base64
+import os
 import re
 import sys
 
@@ -26,6 +28,15 @@ def main():
         assert '</script' not in code, path
         return '<script id="src-%s">\n%s\n</script>' % (name, code)
     body = re.sub(r'<script src="(assets/js/[a-z]+\.js)"></script>', inline, body)
+    # The host serves only standard web types, so binary data travels as
+    # base64 text next to the page.
+    outdir = os.path.join(os.path.dirname(out), 'assets', 'data')
+    os.makedirs(outdir, exist_ok=True)
+    for name in ('digits-train', 'digits-test'):
+        raw = open('assets/data/%s.bin.gz' % name, 'rb').read()
+        with open(os.path.join(outdir, name + '.b64.txt'), 'w') as f:
+            f.write(base64.b64encode(raw).decode('ascii'))
+        body = body.replace('assets/data/%s.bin.gz' % name, 'assets/data/%s.b64.txt' % name)
     keep = []
     keep += re.findall(r'<title>.*?</title>', head, flags=re.S)
     keep += re.findall(r'<link [^>]*>', head)
