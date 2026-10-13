@@ -159,6 +159,7 @@ em { font-style: italic; }
 @keyframes pulse { to { box-shadow: 0 0 0 .5rem transparent; } }
 .meter .sep { color: var(--rule); }
 @media (max-width: 26rem) { .meter .flopwrap { display: none; } }
+@media (max-width: 22.5rem) { .meter .plong { display: none; } }
 
 /* ---------------------------------------------------------------- hero */
 .hero { padding-block: clamp(2.5rem, 7vw, 5.5rem) 1.5rem; }
@@ -466,7 +467,7 @@ footer.colophon { border-top: 1px solid var(--rule); margin-top: 3rem; padding-b
     </nav>
     <div class="meter" id="meter" title="Work this page has done on your device">
       <span class="dot" aria-hidden="true"></span>
-      <span><span class="num" id="m-pos">0</span> positions imagined</span>
+      <span><span class="num" id="m-pos">0</span> positions<span class="plong"> imagined</span></span>
       <span class="flopwrap"><span class="sep">·</span> <span class="num" id="m-flop">0</span> FLOP spent learning</span>
     </div>
   </div>
