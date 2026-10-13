@@ -60,6 +60,8 @@ tools/                   data packing and the single-file artifact build
 
 ## Reproduce the numbers
 
+`sh tests/run-all.sh` runs the fast checks (about a minute). Individually:
+
 ```sh
 node tests/tourney-par.js '{"sims":[16,256,1024,4096,16384],"games":80,"c":0.5,"openingPlies":2}'   # Expert vs Searcher
 node tests/rulebook-eval.js --test       # Rulebook accuracy and confusion matrix

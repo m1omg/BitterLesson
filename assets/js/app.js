@@ -889,6 +889,7 @@
       const rng = BL.makeRng(seedBase);
       const tasks = [];
       this.topLevel = LEVELS.length - 1;
+      this.trimChecked = false;
       for (let li = 0; li < LEVELS.length; li++) {
         for (let o = 0; o < OPENINGS_PER_LEVEL; o++) {
           const g = new BL.Game(BL.STANDARD_RULES);
