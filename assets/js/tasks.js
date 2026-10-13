@@ -153,25 +153,29 @@
     post({ id: msg.id, type: 'done', wrong });
   }
 
-  // The Feature Engineer trains start to finish in one task, reporting test
-  // errors at the FLOP checkpoints it is given.
+  // The Feature Engineer trains start to finish in one task, reporting its
+  // error rate at the FLOP checkpoints it is given: on the first `evalCount`
+  // test digits along the way, and on all of them at the end.
   async function feTrain(msg, post) {
     const D = BL.digits, { id } = msg;
     const train = state.train, test = state.test;
     const F = D.HOG.size;
-    const testF = new Float32Array(test.count * F);
-    for (let i = 0; i < test.count; i++) D.hogFeatures(image(test, i), testF.subarray(i * F, (i + 1) * F));
+    const evalN = Math.min(msg.evalCount || 2500, test.count);
+    const testF = new Float32Array(evalN * F);
+    for (let i = 0; i < evalN; i++) D.hogFeatures(image(test, i), testF.subarray(i * F, (i + 1) * F));
     const lin = new D.LinearClassifier(F, { lr: msg.lr || 0.003, batch: msg.batch || 32 });
     state.fe = lin;
     const f = new Float32Array(F);
     const rng = D.makeFloatRng(msg.seed || 11);
-    const errors = () => {
+    const argmax = (p) => { let b = 0; for (let k = 1; k < 10; k++) if (p[k] > p[b]) b = k; return b; };
+    const wrongOn = (full) => {
       const wrong = [];
-      for (let i = 0; i < test.count; i++) {
-        const p = lin.predict(testF.subarray(i * F, (i + 1) * F));
-        let b = 0;
-        for (let k = 1; k < 10; k++) if (p[k] > p[b]) b = k;
-        if (b !== test.labels[i]) wrong.push(i);
+      const n = full ? test.count : evalN;
+      for (let i = 0; i < n; i++) {
+        let feat;
+        if (i < evalN) feat = testF.subarray(i * F, (i + 1) * F);
+        else { D.hogFeatures(image(test, i), f); feat = f; }
+        if (argmax(lin.predict(feat)) !== test.labels[i]) wrong.push(i);
       }
       return wrong;
     };
@@ -181,8 +185,9 @@
     const perExample = lin.flopsPerExample + D.HOG.flops;
     const report = (final) => {
       lin.flush();
-      const wrong = errors();
-      post({ id, type: 'point', flops, seen, errors: wrong.length, wrong: final ? wrong : undefined, final: !!final, W: lin.W.slice(), b: lin.b.slice() });
+      const wrong = wrongOn(final);
+      const n = final ? test.count : evalN;
+      post({ id, type: 'point', flops, seen, rate: wrong.length / n, n, errors: wrong.length, wrong: final ? wrong : undefined, final: !!final, W: lin.W.slice(), b: lin.b.slice() });
     };
     report(false);
     for (let e = 0; e < msg.epochs; e++) {
@@ -195,7 +200,10 @@
         D.hogFeatures(image(train, i), f);
         lin.train(f, train.labels[i]);
         flops += perExample; seen++;
-        while (ci < checkpoints.length && flops >= checkpoints[ci]) { report(false); ci++; }
+        if (ci < checkpoints.length && flops >= checkpoints[ci]) {
+          while (ci < checkpoints.length && flops >= checkpoints[ci]) ci++;
+          report(false);
+        }
         if (seen % 256 === 0 && now() - last > 30) {
           post({ id, type: 'work', flops, seen });
           await yieldNow(); last = now();

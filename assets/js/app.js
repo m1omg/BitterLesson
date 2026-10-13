@@ -81,6 +81,20 @@
     if (m) { const p = m[1].split(',').map((x) => parseFloat(x)); return 'rgba(' + p[0] + ',' + p[1] + ',' + p[2] + ',' + a + ')'; }
     return c;
   }
+  // Grey image of a float or byte array, normalised to its own maximum.
+  function paintGray(canvas, data, w, h) {
+    const ctx = canvas.getContext('2d');
+    const img = ctx.createImageData(w, h);
+    let mx = 0;
+    for (let i = 0; i < w * h; i++) if (data[i] > mx) mx = data[i];
+    const s = mx > 0 ? 255 / mx : 0;
+    for (let i = 0; i < w * h; i++) {
+      const v = Math.round(Math.max(0, data[i]) * s);
+      img.data[i * 4] = v; img.data[i * 4 + 1] = v; img.data[i * 4 + 2] = v; img.data[i * 4 + 3] = 255;
+    }
+    ctx.putImageData(img, 0, 0);
+  }
+
   const FONT = {
     mono: (px, w) => (w || 400) + ' ' + px + 'px "IBM Plex Mono", ui-monospace, Menlo, monospace',
     sans: (px, w) => (w || 500) + ' ' + px + 'px "IBM Plex Sans Condensed", "IBM Plex Sans", "Arial Narrow", Arial, sans-serif',
@@ -588,7 +602,7 @@
         }
       }
       // the top of the chart
-      if (upto > 2026.5) {
+      if (upto > 2026.5 && !small) {
         let top = this.models[0];
         for (const m of this.models) if (m[4] > top[4]) top = m;
         label(ctx, Math.floor(top[2]) + ': 10' + sup(Math.round(top[4])) + ' FLOP', A.tx(top[2]) - 8, A.ty(top[4]) - 2, { align: 'right', font: FONT.mono(small ? 10.5 : 11.5, 500), color: P.ink });
@@ -826,7 +840,7 @@
           board.live = true;
           board.used = now();
           board.game.reset(); board.line = null; board.searcher = task.mctsFirst ? 1 : 2;
-          board.cap.textContent = fmtSims(L.sims) + ' · Searcher ' + (task.mctsFirst ? 'first' : 'second');
+          board.cap.textContent = fmtSims(L.sims) + ' · playing';
           searchStart = now();
           invalidate(board);
         } else if (m.type === 'move') {
@@ -845,7 +859,15 @@
         if (board) {
           board.live = false;
           board.line = m.line;
-          board.cap.textContent = fmtSims(L.sims) + ' · ' + (m.score === 1 ? 'Searcher won' : m.score === 0 ? 'Expert won' : 'draw');
+          board.cap.innerHTML = '';
+          board.cap.appendChild(document.createTextNode(fmtSims(L.sims) + ' · '));
+          if (m.score === 0.5) board.cap.appendChild(document.createTextNode('draw'));
+          else {
+            const who = document.createElement('b');
+            who.textContent = m.score === 1 ? 'Searcher' : 'Expert';
+            who.className = m.score === 1 ? 'c' : 'k';
+            board.cap.appendChild(who);
+          }
           invalidate(board);
         }
         this.chart.pops.set(task.li, now());
@@ -964,12 +986,15 @@
       ctx.fillStyle = rgba(P.compute, 0.07);
       ctx.fillRect(cx, A.t, A.r - cx, A.b - A.t);
     }
-    const xt = LEVELS.map((s, i) => ({ v: s, label: compact ? (i % 2 === 0 ? fmtSims(s) : null) : (small && i % 2 === 1 ? null : fmtInt(s)) }));
+    const xt = LEVELS.map((s, i) => ({ v: s, label: compact || small ? (i % 2 === 0 ? fmtSims(s) : null) : fmtInt(s) }));
     const yt = [0, 0.25, 0.5, 0.75, 1].map((v) => ({ v, label: compact && v % 0.5 ? null : Math.round(v * 100) + '%', strong: v === 0.5 }));
     A.grid(ctx, xt, yt, { fontPx: compact ? 9 : 10.5 });
     if (!compact) A.titles(ctx, 'imagined games per move for the Searcher →', 'score against the other player', { yIndent: small ? 38 : 48, xOff: small ? 40 : 42 });
     label(ctx, 'even', A.r - 2, A.ty(0.5) - 9, { align: 'right', font: FONT.sans(compact ? 9.5 : 11.5), color: P.ink3 });
-    const pts = T.levels.map((L, i) => ({ L, i, p: T.rate(L) })).filter((q) => q.p != null);
+    const all = T.levels.map((L, i) => ({ L, i, p: T.rate(L), done: L.planned > 0 && L.n >= L.planned })).filter((q) => q.p != null);
+    // a level still being played joins the line once it has enough games to mean something
+    const pts = all.filter((q) => q.done || q.L.n >= 12);
+    const partial = all.filter((q) => !(q.done || q.L.n >= 12));
     const series = [
       { color: P.compute, f: (p) => p },
       { color: P.knowledge, f: (p) => 1 - p },
@@ -1006,6 +1031,15 @@
         ctx.fill();
         ctx.lineWidth = 2; ctx.strokeStyle = s.color; ctx.stroke();
       }
+      // games in progress at a new level: faint, unconnected
+      ctx.save();
+      for (const q of partial) {
+        const xx = A.tx(q.L.sims), yy = A.ty(s.f(q.p));
+        ctx.globalAlpha = 0.35 + 0.4 * (q.L.n / 12);
+        ctx.beginPath(); ctx.arc(xx, yy, compact ? 2.4 : 3.6, 0, Math.PI * 2);
+        ctx.lineWidth = 1.5; ctx.strokeStyle = s.color; ctx.stroke();
+      }
+      ctx.restore();
       ctx.restore();
     }
     if (x) {
@@ -1332,8 +1366,10 @@
   // ================================================================ II. learning
   const CNN_CONFIG = { f1: 8, f2: 16, lr: 0.003, batch: 32, seed: 2012 };
   const CNN_EPOCHS = 8, FE_EPOCHS = 12;
+  const EVAL_SUBSET = 2500; // test digits used for the points along the way; the end uses all
   const CHECKPOINTS = [];
   for (let e = 5; e <= 12.001; e += 0.25) CHECKPOINTS.push(Math.pow(10, e));
+  const fmtRate = (r) => (r >= 0.1 ? (r * 100).toFixed(0) : r >= 0.01 ? (r * 100).toFixed(1) : (r * 100).toFixed(2)) + '%';
 
   const race = {
     pool: null, running: false, done: false,
@@ -1351,50 +1387,57 @@
       this._readouts();
       if (BL.rulebook && BL.rulebook.RULE_COUNT) $('rb-rules').textContent = BL.rulebook.RULE_COUNT + ' hand-written rules';
     },
+    // The digit both programs are shown looking at, and their edge maps.
     _filters() {
-      const human = $('filters-human'), learned = $('filters-learned');
-      // Four classic edge detectors, in four orientations.
-      const kernels = [];
-      for (const ang of [0, 45, 90, 135]) {
-        const k = new Float32Array(25), a = ang * Math.PI / 180;
-        for (let y = 0; y < 5; y++) for (let x = 0; x < 5; x++) {
-          const u = (x - 2) * Math.cos(a) + (y - 2) * Math.sin(a);
-          const v = -(x - 2) * Math.sin(a) + (y - 2) * Math.cos(a);
-          k[y * 5 + x] = Math.sign(u) * Math.exp(-(v * v) / 4) * (Math.abs(u) > 0.3 ? 1 : 0);
+      const mk = (parent, n, size) => {
+        const out = [];
+        for (let i = 0; i < n; i++) { const c = document.createElement('canvas'); c.width = size; c.height = size; parent.appendChild(c); out.push(c); }
+        return out;
+      };
+      this.humanMaps = mk($('maps-human'), 4, 28);
+      this.learnedMaps = mk($('maps-learned'), CNN_CONFIG.f1, 24);
+    },
+    _setMapDigit(data) {
+      let i = 0;
+      while (i < data.test.count && data.test.labels[i] !== 3) i++;
+      this.mapDigit = data.test.images.slice(i * 784, i * 784 + 784);
+      paintGray($('maps-digit'), this.mapDigit, 28, 28);
+      // edge strength in four orientations, from the same gradients HOG uses
+      const px = this.mapDigit, maps = [0, 1, 2, 3].map(() => new Float32Array(784));
+      for (let y = 0; y < 28; y++) for (let x = 0; x < 28; x++) {
+        const l = x > 0 ? px[y * 28 + x - 1] : 0, r = x < 27 ? px[y * 28 + x + 1] : 0;
+        const u = y > 0 ? px[(y - 1) * 28 + x] : 0, d = y < 27 ? px[(y + 1) * 28 + x] : 0;
+        const gx = (r - l) / 255, gy = (d - u) / 255, mag = Math.sqrt(gx * gx + gy * gy);
+        if (!mag) continue;
+        let ang = Math.atan2(gy, gx); if (ang < 0) ang += Math.PI;
+        for (let k = 0; k < 4; k++) {
+          let dd = Math.abs(ang - k * Math.PI / 4); dd = Math.min(dd, Math.PI - dd);
+          maps[k][y * 28 + x] = mag * Math.max(0, 1 - dd / (Math.PI / 4));
         }
-        kernels.push(k);
       }
-      this.humanTiles = kernels.map((k) => this._tile(human, k));
-      this.learnedTiles = [];
-      for (let f = 0; f < CNN_CONFIG.f1; f++) this.learnedTiles.push(this._tile(learned, this.net.w1.subarray(f * 25, f * 25 + 25)));
+      maps.forEach((m, k) => paintGray(this.humanMaps[k], m, 28, 28));
+      this._paintFilters();
     },
-    _tile(parent, data) {
-      const c = document.createElement('canvas');
-      c.width = 5; c.height = 5;
-      parent.appendChild(c);
-      const t = { canvas: c, data: data };
-      this._paintTile(t);
-      return t;
-    },
-    _paintTile(t, data) {
-      if (data) t.data = data;
-      const ctx = t.canvas.getContext('2d');
-      const img = ctx.createImageData(5, 5);
-      let mn = Infinity, mx = -Infinity;
-      for (const v of t.data) { if (v < mn) mn = v; if (v > mx) mx = v; }
-      const s = Math.max(Math.abs(mn), Math.abs(mx)) || 1;
-      for (let i = 0; i < 25; i++) {
-        const v = Math.round(127.5 + 127.5 * (t.data[i] / s));
-        img.data[i * 4] = v; img.data[i * 4 + 1] = v; img.data[i * 4 + 2] = v; img.data[i * 4 + 3] = 255;
+    _paintFilters() {
+      if (!this.mapDigit) return;
+      const net = this.net, px = this.mapDigit, F1 = CNN_CONFIG.f1;
+      const out = new Float32Array(576);
+      for (let f = 0; f < F1; f++) {
+        const wo = f * 25, bias = net.b1[f];
+        for (let y = 0; y < 24; y++) for (let x = 0; x < 24; x++) {
+          let s = bias;
+          for (let ky = 0; ky < 5; ky++) for (let kx = 0; kx < 5; kx++) s += net.w1[wo + ky * 5 + kx] * px[(y + ky) * 28 + x + kx] / 255;
+          out[y * 24 + x] = s > 0 ? s : 0;
+        }
+        paintGray(this.learnedMaps[f], out, 24, 24);
       }
-      ctx.putImageData(img, 0, 0);
     },
     async start() {
       if (this.running) return;
       this.started = true;
       this.running = true;
       $('race-run').textContent = 'Stop';
-      $('race-status').textContent = 'loading 2.3 MB of handwritten digits…';
+      $('race-status').textContent = 'loading 3.6 MB of handwritten digits…';
       let data;
       try { data = await loadDigits(); } catch (e) {
         $('race-status').textContent = e.message; this.running = false; $('race-run').textContent = 'Try again'; return;
@@ -1402,24 +1445,34 @@
       draw.setData(data);
       if (!this.running) return;
       this._reset();
+      this._setMapDigit(data);
       this.data = data;
+      // Gradients on every core we can have; one more core each for the
+      // Rulebook and Feature Engineer, and for grading the Learner.
       this.pool = new Pool(WORKERS);
-      $('race-status').textContent = 'sending the digits to ' + this.pool.size + (this.pool.size > 1 ? ' cores' : ' core') + '…';
-      await this.pool.each(() => ({ type: 'setData', train: data.trainBuf, test: data.testBuf }));
+      this.sidePool = new Pool(1);
+      this.evalPool = new Pool(1);
+      $('race-status').textContent = 'sending the digits to ' + (this.pool.size + 2) + ' threads…';
+      await Promise.all([
+        this.pool.each(() => ({ type: 'setData', train: data.trainBuf })),
+        this.sidePool.each(() => ({ type: 'setData', train: data.trainBuf, test: data.testBuf })),
+        this.evalPool.each(() => ({ type: 'setData', test: data.testBuf })),
+      ]);
       if (!this.running) return;
       this.t0 = now();
-      // The Rulebook reads the test set once.
+      // The Rulebook reads all the test digits once.
       if (BL.rulebook) {
-        this.pool.run({ type: 'rulebookEval' }).then((m) => {
+        this.sidePool.run({ type: 'rulebookEval' }).then((m) => {
           if (m.type !== 'done') return;
-          this.rulebook = { errors: m.wrong.length, wrong: m.wrong, ms: m.ms };
+          const n = this.data.test.count;
+          this.rulebook = { errors: m.wrong.length, rate: m.wrong.length / n, n, wrong: m.wrong, ms: m.ms };
           invalidate(this.chart); this._readouts(); multiples.update();
         });
       }
       // The Feature Engineer trains on one core.
-      this.pool.run({ type: 'feTrain', epochs: FE_EPOCHS, checkpoints: CHECKPOINTS, lr: 0.003, batch: 32, seed: 11 }, (m) => {
+      this.sidePool.run({ type: 'feTrain', epochs: FE_EPOCHS, checkpoints: CHECKPOINTS, lr: 0.003, batch: 32, seed: 11, evalCount: EVAL_SUBSET }, (m) => {
         if (m.type === 'point') {
-          this.fe.push({ flops: m.flops, errors: m.errors });
+          this.fe.push({ flops: Math.max(m.flops, 1e5), rate: m.rate, n: m.n, errors: m.errors, final: m.final });
           meter.add(0, m.flops - this.feFlops); this.feFlops = m.flops;
           this.feW = m.W; this.feB = m.b;
           if (m.final) this.feWrong = m.wrong;
@@ -1435,20 +1488,34 @@
     },
     _reset() {
       this.fe = []; this.cnn = []; this.feDone = false; this.cnnDone = false; this.done = false;
-      this.flops = 0; this.seen = 0; this.elapsed = 0; this.feFlops = 0;
+      this.flops = 0; this.seen = 0; this.elapsed = 0; this.feFlops = 0; this.trainEnd = 0; this.pendingSnap = null; this.evalLoop = null;
+      this.rulebook = null;
       this.net = new BL.digits.ConvNet(CNN_CONFIG);
-      for (let f = 0; f < CNN_CONFIG.f1; f++) this._paintTile(this.learnedTiles[f], this.net.w1.subarray(f * 25, f * 25 + 25));
+      this.trainMs = 0;
+      this._paintFilters();
       $('race-result').textContent = '';
     },
-    async _evalCnn() {
-      const w = this.net.getParams();
-      const n = this.data.test.count, k = this.pool.size, per = Math.ceil(n / k);
-      const parts = [];
-      for (let i = 0; i < k; i++) parts.push(this.pool.run({ type: 'cnnEval', config: JSON.stringify(CNN_CONFIG), w, from: i * per, to: Math.min(n, (i + 1) * per) }));
-      const res = await Promise.all(parts);
-      if (res.some((r) => r.type !== 'done')) return null;
-      const wrong = [].concat(...res.map((r) => r.wrong));
-      return wrong;
+    // Evaluate a snapshot of the weights on the evaluation worker. Training
+    // never waits for this; if snapshots pile up, only the newest is kept.
+    _queueEval(full, flopsOverride) {
+      this.pendingSnap = { w: this.net.getParams(), flops: flopsOverride || this.flops, seen: this.seen, full };
+      if (!this.evalLoop) this.evalLoop = this._evalLoop();
+      return this.evalLoop;
+    },
+    async _evalLoop() {
+      const config = JSON.stringify(CNN_CONFIG);
+      while (this.pendingSnap && this.evalPool) {
+        const snap = this.pendingSnap;
+        this.pendingSnap = null;
+        const n = snap.full ? this.data.test.count : Math.min(EVAL_SUBSET, this.data.test.count);
+        let m;
+        try { m = await this.evalPool.run({ type: 'cnnEval', config, w: snap.w, from: 0, to: n }); } catch (e) { break; }
+        if (!m || m.type !== 'done') break;
+        this.cnn.push({ flops: snap.flops, rate: m.wrong.length / n, n, errors: m.wrong.length, seen: snap.seen, final: snap.full });
+        if (snap.full) this.cnnWrong = m.wrong;
+        invalidate(this.chart); this._readouts(); multiples.update();
+      }
+      this.evalLoop = null;
     },
     async _trainLoop() {
       const net = this.net, data = this.data, pool = this.pool;
@@ -1457,16 +1524,25 @@
       const rng = BL.digits.makeFloatRng(4242);
       const config = JSON.stringify(CNN_CONFIG);
       let ci = 0;
-      const wrong0 = await this._evalCnn();
-      if (!wrong0) return;
-      this.cnn.push({ flops: 1e5, errors: wrong0.length });
-      invalidate(this.chart);
+      // Early points come thick and fast; measure them on 500 digits, pausing
+      // training (and its clock) while we do.
+      const quickEval = async (flops) => {
+        const n = Math.min(500, data.test.count), w = net.getParams();
+        const r = await this.evalPool.run({ type: 'cnnEval', config, w, from: 0, to: n });
+        if (!r || r.type !== 'done') return false;
+        const wrong = r.wrong.length;
+        this.cnn.push({ flops, rate: wrong / n, n, errors: wrong, seen: this.seen });
+        invalidate(this.chart); this._readouts(); multiples.update();
+        return true;
+      };
+      if (!(await quickEval(1e5))) return;
       let lastPaint = 0;
       for (let e = 0; e < CNN_EPOCHS && this.running; e++) {
         const order = Array.from({ length: N }, (_, i) => i);
         for (let i = N - 1; i > 0; i--) { const j = rng.int(i + 1); const t = order[i]; order[i] = order[j]; order[j] = t; }
         for (let s = 0; s < stepsPerEpoch && this.running; s++) {
           const step = e * stepsPerEpoch + s;
+          const ts = now();
           const idx = order.slice(s * B, s * B + B);
           const k = pool.size, per = Math.ceil(B / k);
           const w = net.getParams();
@@ -1481,6 +1557,7 @@
           for (const r of res) net.addGrads(r.grads);
           net.setLearningRate(CNN_CONFIG.lr * 0.5 * (1 + Math.cos(Math.PI * step / totalSteps)));
           net.step(B);
+          this.trainMs += now() - ts;
           this.seen += B;
           const f = B * net.flopsPerExample;
           this.flops += f;
@@ -1489,33 +1566,33 @@
           const t = now();
           if (t - lastPaint > 120) {
             lastPaint = t;
-            for (let q = 0; q < CNN_CONFIG.f1; q++) this._paintTile(this.learnedTiles[q], net.w1.subarray(q * 25, q * 25 + 25));
+            this._paintFilters();
             this._readouts();
             draw.refresh();
           }
           if (ci < CHECKPOINTS.length && this.flops >= CHECKPOINTS[ci]) {
             while (ci < CHECKPOINTS.length && this.flops >= CHECKPOINTS[ci]) ci++;
-            const wrong = await this._evalCnn();
-            if (!wrong) return;
-            this.cnn.push({ flops: this.flops, errors: wrong.length });
-            this.cnnWrong = wrong;
-            invalidate(this.chart); this._readouts(); multiples.update();
+            if (this.flops < 1.2e9) { if (!(await quickEval(this.flops))) return; }
+            else this._queueEval(false);
           }
         }
       }
       if (!this.running) return;
-      const wrong = await this._evalCnn();
-      if (wrong) { this.cnn.push({ flops: this.flops, errors: wrong.length }); this.cnnWrong = wrong; }
+      this.trainEnd = now();
+      this._paintFilters();
+      if (this.evalLoop) await this.evalLoop;
+      await this._queueEval(true);
       this.cnnDone = true;
-      for (let q = 0; q < CNN_CONFIG.f1; q++) this._paintTile(this.learnedTiles[q], net.w1.subarray(q * 25, q * 25 + 25));
       invalidate(this.chart);
       this._maybeDone();
     },
     _maybeDone() {
       if (!(this.cnnDone && this.feDone)) { this._readouts(); return; }
       this.running = false; this.done = true;
-      this.elapsed = now() - this.t0;
-      this.pool.terminate(); this.pool = null;
+      this.elapsed = this.trainEnd ? this.trainEnd - this.t0 : now() - this.t0;
+      if (this.pool) { this.pool.terminate(); this.pool = null; }
+      if (this.evalPool) { this.evalPool.terminate(); this.evalPool = null; }
+      if (this.sidePool) { this.sidePool.terminate(); this.sidePool = null; }
       $('race-run').textContent = 'Train again from scratch';
       this._readouts();
       this._result();
@@ -1526,45 +1603,51 @@
       if (!this.running) return;
       this.running = false;
       if (this.pool) { this.pool.terminate(); this.pool = null; }
+      if (this.evalPool) { this.evalPool.terminate(); this.evalPool = null; }
+      if (this.sidePool) { this.sidePool.terminate(); this.sidePool = null; }
+      this.pendingSnap = null;
       this.elapsed = this.t0 ? now() - this.t0 : 0;
       $('race-run').textContent = 'Start training again';
       this._readouts(true);
+    },
+    feBest() {
+      if (!this.fe.length) return null;
+      const fin = this.fe.find((p) => p.final);
+      return fin ? fin.rate : Math.min(...this.fe.map((p) => p.rate));
     },
     crossings() {
       const out = {};
       const cross = (series, level) => {
         for (let i = 1; i < series.length; i++) {
           const a = series[i - 1], b = series[i];
-          if (a.errors > level && b.errors <= level) {
-            const la = Math.log10(a.errors), lb = Math.log10(b.errors), lv = Math.log10(level);
+          if (a.rate > level && b.rate <= level) {
+            const la = Math.log10(Math.max(a.rate, 1e-4)), lb = Math.log10(Math.max(b.rate, 1e-4)), lv = Math.log10(level);
             const f = la === lb ? 1 : (la - lv) / (la - lb);
             return Math.pow(10, lerp(Math.log10(a.flops), Math.log10(b.flops), f));
           }
         }
         return null;
       };
-      if (this.rulebook) out.rulebook = cross(this.cnn, this.rulebook.errors);
+      if (this.rulebook) out.rulebook = cross(this.cnn, this.rulebook.rate);
       if (this.feDone && this.fe.length) {
-        const best = Math.min(...this.fe.map((p) => p.errors));
-        out.fe = cross(this.cnn, best - 0.5);
-        out.feBest = best;
+        out.feBest = this.feBest();
+        out.fe = cross(this.cnn, out.feBest);
       }
       return out;
     },
-    timeAtFlops(f) { // wall-clock seconds the Learner needed to reach f FLOP
-      const rate = this.flops / Math.max(1, (this.done ? this.elapsed : now() - this.t0));
-      return f / rate;
+    timeAtFlops(f) { // milliseconds of training the Learner needed to reach f FLOP
+      return f / Math.max(1, this.flops) * this.trainMs;
     },
     _readouts(stopped) {
       const el = $('race-readouts');
       el.innerHTML = '';
       const add = (k, v) => { const s = document.createElement('span'); s.innerHTML = k + ' <b></b>'; s.lastChild.textContent = v; el.appendChild(s); };
       const last = (arr) => (arr.length ? arr[arr.length - 1] : null);
-      if (this.rulebook) add('Rulebook mistakes', String(this.rulebook.errors));
+      if (this.rulebook) add('Rulebook', fmtRate(this.rulebook.rate) + ' misread');
       const fe = last(this.fe);
-      if (fe) add('Feature Engineer', fe.errors + (this.feDone ? ' (done)' : ''));
+      if (fe) add('Feature Engineer', fmtRate(fe.rate) + (this.feDone ? ' (done)' : ''));
       const c = last(this.cnn);
-      if (c) add('Learner', c.errors + ' · epoch ' + (this.epoch || 0) + ' of ' + CNN_EPOCHS);
+      if (c) add('Learner', fmtRate(c.rate) + ' · epoch ' + (this.epoch || 0) + ' of ' + CNN_EPOCHS);
       add('Learner FLOP', fmtSci(this.flops));
       add('time', fmtTime(this.running ? now() - this.t0 : this.elapsed));
       if (this.running) $('race-status').textContent = 'training on ' + (this.pool ? this.pool.size : 1) + (workersBroken ? ' slice (main thread)' : ' cores') + ' · ' + fmtInt(this.seen) + ' examples';
@@ -1574,73 +1657,93 @@
     _result() {
       const x = this.crossings();
       const c = this.cnn[this.cnn.length - 1];
+      const feFin = this.fe.find((p) => p.final);
       const parts = [];
       if (x.rulebook) parts.push('The Learner passed the Rulebook after ' + fmtSci(x.rulebook) + ' FLOP of training, about ' + fmtTime(this.timeAtFlops(x.rulebook)) + ' on this device.');
-      if (x.fe) parts.push('It passed the Feature Engineer, which stopped improving at ' + x.feBest + ' mistakes, after ' + fmtSci(x.fe) + ' FLOP.');
-      else if (x.feBest != null) parts.push('This time it did not get below the Feature Engineer\'s ' + x.feBest + ' mistakes; the hand-designed features are very good at digits.');
-      if (c && this.rulebook) parts.push('Final count: Rulebook ' + this.rulebook.errors + ', Feature Engineer ' + (x.feBest != null ? x.feBest : '?') + ', Learner ' + c.errors + ' mistakes out of 2,000.');
+      if (x.fe) parts.push('It passed the Feature Engineer, whose hand-designed features had stopped improving, after ' + fmtSci(x.fe) + ' FLOP, about ' + fmtTime(this.timeAtFlops(x.fe)) + '.');
+      else if (x.feBest != null) parts.push('This time it did not get below the Feature Engineer; on digits, the hand-designed features are very good.');
+      if (c && c.final && this.rulebook && feFin) parts.push('Mistakes on all ' + fmtInt(c.n) + ' test digits: Rulebook ' + fmtInt(this.rulebook.errors) + ', Feature Engineer ' + fmtInt(feFin.errors) + ', Learner ' + fmtInt(c.errors) + '.');
       $('race-result').textContent = parts.join(' ');
     },
   };
 
   function drawRaceChart(S, R, t, compact) {
     const ctx = S.fit(), w = S.w, h = S.h, P = palette();
-    const small = w < 520 || compact;
-    const A = new Axes(w, h, compact ? { l: 30, r: 8, t: 14, b: 22 } : { l: small ? 38 : 48, r: small ? 12 : 22, t: 30, b: small ? 44 : 48 }, { min: 1e5, max: 1e12, log: true }, { min: 2000, max: 10, log: true });
+    const small = w < 560 || compact;
+    const YMAX = 0.95, YMIN = 0.004;
+    const pad = compact ? { l: 32, r: 8, t: 14, b: 22 } : small ? { l: 40, r: 12, t: 30, b: 44 } : { l: 50, r: 150, t: 30, b: 48 };
+    const A = new Axes(w, h, pad, { min: 1e5, max: 1e12, log: true }, { min: YMAX, max: YMIN, log: true });
     const xt = [];
     for (let e = 5; e <= 12; e++) xt.push({ v: Math.pow(10, e), pow: (compact ? e % 2 === 1 : !(small && e % 2 === 0)) ? e : null });
-    const yt = [2000, 1000, 500, 200, 100, 50, 20, 10].map((v) => ({ v, label: compact ? ([1000, 100, 10].includes(v) ? (v === 1000 ? '1k' : String(v)) : null) : fmtInt(v) }));
+    const ticks = [0.9, 0.5, 0.2, 0.1, 0.05, 0.02, 0.01, 0.005];
+    const yt = ticks.map((v) => ({ v, label: compact && ![0.9, 0.1, 0.01].includes(v) ? null : (v * 100) + '%' }));
     A.grid(ctx, xt, yt, { fontPx: compact ? 9 : 10.5 });
-    if (!compact) A.titles(ctx, 'training computation, FLOP →', 'mistakes on 2,000 unseen digits (fewer is higher)', { yIndent: small ? 38 : 48, xOff: small ? 40 : 42 });
-    // chance
-    if (!compact) label(ctx, 'guessing', A.r - 2, A.ty(1800) + 10, { align: 'right', font: FONT.sans(11.5), color: P.ink3 });
+    if (!compact) A.titles(ctx, 'training computation, FLOP →', 'share of unseen test digits misread · log scale · better ↑', { yIndent: small ? 40 : 50, xOff: small ? 40 : 42 });
+    const Y = (r) => A.ty(clamp(r, YMIN, YMAX));
+    const X = (f) => A.tx(clamp(f, 1e5, 1e12));
     const line = (pts, color, dashed, width) => {
       if (!pts.length) return;
       ctx.save();
       ctx.strokeStyle = color; ctx.lineWidth = width || (compact ? 2 : 2.5); ctx.lineJoin = 'round';
       if (dashed) ctx.setLineDash(dashed);
       ctx.beginPath();
-      pts.forEach((p, i) => { const x = A.tx(clamp(p.flops, 1e5, 1e12)), y = A.ty(clamp(p.errors, 10, 2000)); if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y); });
+      pts.forEach((p, i) => { const x = X(p.flops), y = Y(p.rate); if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y); });
       ctx.stroke();
       ctx.restore();
     };
+    const ends = [];
     // Rulebook: flat, it never trains
     if (R.rulebook) {
-      line([{ flops: 1e5, errors: R.rulebook.errors }, { flops: 1e12, errors: R.rulebook.errors }], P.knowledge, null);
-      if (!compact) label(ctx, 'Rulebook · ' + R.rulebook.errors, A.l + 8, A.ty(R.rulebook.errors) - 11, { color: P.knowledgeInk, font: FONT.sans(12.5, 600) });
+      line([{ flops: 1e5, rate: R.rulebook.rate }, { flops: 1e12, rate: R.rulebook.rate }], P.knowledge, null);
+      ends.push({ y: Y(R.rulebook.rate), name: 'Rulebook', value: fmtRate(R.rulebook.rate), color: P.knowledgeInk });
     }
     // Feature Engineer, then its plateau extended
     if (R.fe.length) {
       line(R.fe, P.hybrid, null);
       const lastFe = R.fe[R.fe.length - 1];
       if (R.feDone) {
-        const best = Math.min(...R.fe.map((p) => p.errors));
-        line([{ flops: lastFe.flops, errors: best }, { flops: 1e12, errors: best }], P.hybrid, [4, 4], compact ? 1.5 : 2);
-        if (!compact) label(ctx, 'Feature Engineer · ' + best, A.tx(lastFe.flops) + 8, A.ty(best) - 12, { color: P.hybrid, font: FONT.sans(12.5, 600) });
-      } else if (!compact) {
-        label(ctx, 'Feature Engineer', A.tx(lastFe.flops) + 8, A.ty(lastFe.errors) - 12, { color: P.hybrid, font: FONT.sans(12.5, 600) });
+        const best = R.feBest();
+        line([{ flops: lastFe.flops, rate: best }, { flops: 1e12, rate: best }], P.hybrid, [4, 4], compact ? 1.5 : 2);
+        ends.push({ y: Y(best), name: 'Feature Engineer', value: fmtRate(best), color: P.hybrid });
+      } else {
+        ends.push({ y: Y(lastFe.rate), name: 'Feature Engineer', value: fmtRate(lastFe.rate), color: P.hybrid, live: true });
       }
     }
     // Learner
     if (R.cnn.length) {
       line(R.cnn, P.compute, null, compact ? 2.2 : 3);
       const lc = R.cnn[R.cnn.length - 1];
-      const x = A.tx(clamp(lc.flops, 1e5, 1e12)), y = A.ty(clamp(lc.errors, 10, 2000));
+      const x = X(lc.flops), y = Y(lc.rate);
       ctx.beginPath(); ctx.arc(x, y, compact ? 2.8 : 4.5, 0, Math.PI * 2); ctx.fillStyle = P.compute; ctx.fill();
-      if (!compact) label(ctx, 'Learner · ' + lc.errors, x + 9, y + 13, { color: P.computeInk, font: FONT.sans(12.5, 600) });
+      ends.push({ y, name: 'Learner', value: fmtRate(lc.rate), color: P.computeInk, live: !R.cnnDone });
+    }
+    // labels in the right margin, nudged apart
+    if (!compact && !small && ends.length) {
+      ends.sort((a, b) => a.y - b.y);
+      for (let i = 1; i < ends.length; i++) if (ends[i].y - ends[i - 1].y < 30) ends[i].y = ends[i - 1].y + 30;
+      for (const e of ends) {
+        label(ctx, e.name, A.r + 12, e.y - 7, { color: e.color, font: FONT.sans(12.5, 600) });
+        label(ctx, e.value + (e.live ? ' · so far' : ''), A.r + 12, e.y + 9, { color: e.color, font: FONT.mono(11.5, 500) });
+      }
+    } else if (!compact && R.rulebook) {
+      label(ctx, 'Rulebook', A.l + 6, Y(R.rulebook.rate) - 11, { color: P.knowledgeInk, font: FONT.sans(12, 600) });
     }
     // crossovers
     const xs = R.crossings();
     for (const key of ['rulebook', 'fe']) {
       const f = xs[key];
       if (!f) continue;
-      const lvl = key === 'rulebook' ? R.rulebook.errors : xs.feBest;
-      const x = A.tx(f), y = A.ty(lvl);
+      const lvl = key === 'rulebook' ? R.rulebook.rate : xs.feBest;
+      const x = A.tx(f), y = Y(lvl);
       ctx.save();
       ctx.strokeStyle = P.ink; ctx.lineWidth = 1.5;
       ctx.beginPath(); ctx.arc(x, y, compact ? 4.5 : 7, 0, Math.PI * 2); ctx.stroke();
       ctx.restore();
-      if (!compact) label(ctx, 'crossover · ' + fmtSci(f, 1) + ' FLOP', x + 10, y + (key === 'fe' ? 18 : -16), { font: FONT.sans(12, 600), color: P.ink });
+      if (!compact) {
+        const txt = (small ? '' : 'crossover · ') + fmtSci(f, 1) + ' FLOP';
+        const right = x > A.r - 150;
+        label(ctx, txt, x + (right ? -10 : 10), y + (key === 'fe' ? 20 : -17), { align: right ? 'right' : 'left', font: FONT.sans(small ? 11 : 12, 600), color: P.ink });
+      }
     }
     if (!compact && !R.cnn.length && !R.fe.length) {
       label(ctx, R.running ? 'loading…' : 'Training starts when this panel scrolls into view.', (A.l + A.r) / 2, (A.t + A.b) / 2, { align: 'center', color: P.ink3, font: FONT.sans(13) });
@@ -1849,7 +1952,7 @@
         const s = document.createElement('strong'); s.textContent = 'Knowledge engineering, measured. ';
         cap.appendChild(s);
         cap.appendChild(document.createTextNode(E.length + ' revisions in ' + mins + ' minutes. Accuracy after each one on development digits, which come from the training set; ' +
-          (d.test ? 'on the 2,000 unseen test digits the final version scores ' + d.test.acc + '%.' : '')));
+          'its score on the test digits appears in the training race above.'));
         const tip = document.createElement('div');
         tip.className = 'tip'; tip.hidden = true;
         box.appendChild(tip);
@@ -1897,11 +2000,11 @@
       A.titles(ctx, 'minutes of knowledge engineering →', 'Rulebook accuracy on development digits', { yIndent: small ? 38 : 48, xOff: 36 });
       // the Learner, for scale
       if (race.cnn.length && race.done) {
-        const acc = 100 * (1 - race.cnn[race.cnn.length - 1].errors / 2000);
+        const acc = 100 * (1 - race.cnn[race.cnn.length - 1].rate);
         const y = A.ty(acc);
         ctx.save(); ctx.setLineDash([4, 4]); ctx.strokeStyle = P.compute; ctx.lineWidth = 1.5;
         ctx.beginPath(); ctx.moveTo(A.l, y); ctx.lineTo(A.r, y); ctx.stroke(); ctx.restore();
-        label(ctx, 'the Learner after ' + fmtTime(race.elapsed) + ' of training: ' + acc.toFixed(1) + '% on test digits', A.r - 4, y - 10, { align: 'right', font: FONT.sans(small ? 11 : 12, 600), color: P.computeInk });
+        label(ctx, 'the Learner after ' + fmtTime(race.trainMs) + ' of training: ' + acc.toFixed(1) + '% on test digits', A.r - 4, y - 10, { align: 'right', font: FONT.sans(small ? 11 : 12, 600), color: P.computeInk });
       }
       ctx.save();
       ctx.strokeStyle = P.knowledge; ctx.lineWidth = 2.5; ctx.lineJoin = 'round';

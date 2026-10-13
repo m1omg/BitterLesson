@@ -325,7 +325,8 @@ button.primary:hover:not(:disabled) { background: var(--ink-2); border-color: va
 @media (min-width: 62rem) { .boards { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 .mini { background: var(--panel); border: 1px solid var(--rule); border-radius: 3px; padding: .35rem .35rem .3rem; }
 .mini canvas { aspect-ratio: 7 / 6; height: auto; }
-.mini .cap { font-family: var(--mono); font-size: .64rem; color: var(--ink-3); margin-top: .25rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mini .cap { font-family: var(--sans); font-size: .72rem; color: var(--ink-3); margin-top: .25rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mini .cap b { font-weight: 600; }
 
 /* play */
 .play { display: grid; gap: 1rem; }
@@ -346,7 +347,9 @@ button.primary:hover:not(:disabled) { background: var(--ink-2); border-color: va
 @media (min-width: 62rem) { .race { grid-template-columns: minmax(0, 1fr) 16rem; } }
 .filters { display: grid; gap: .9rem; align-content: start; }
 .filters .row { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; }
-.filters canvas { aspect-ratio: 1; height: auto; image-rendering: pixelated; border-radius: 2px; }
+@media (max-width: 61.99rem) { .filters .row { grid-template-columns: repeat(8, minmax(0, 1fr)); } }
+.filters .row canvas { aspect-ratio: 1; height: auto; border-radius: 2px; background: #05070a; }
+#maps-digit { display: inline-block; width: 1.9rem; height: 1.9rem; vertical-align: middle; border-radius: 2px; background: #05070a; margin-left: .2rem; }
 .filters .lab { font-family: var(--sans); font-size: .8rem; color: var(--ink-2); line-height: 1.35; margin-bottom: .35rem; }
 
 .drawlab { display: grid; gap: 1rem; }
@@ -627,18 +630,18 @@ footer.colophon { border-top: 1px solid var(--rule); margin-top: 3rem; padding-b
       </div>
       <div class="race">
         <div class="panel">
-          <div class="chart ratio-wide" id="race-chart"><canvas aria-label="Mistakes on 2,000 unseen digits against training computation, for the three programs"></canvas></div>
+          <div class="chart ratio-wide" id="race-chart"><canvas aria-label="Share of unseen test digits misread against training computation, for the three programs"></canvas></div>
         </div>
         <div class="panel pad filters">
+          <div class="lab" id="maps-digit-lab">Both programs start by looking for edges in a digit like this one: <canvas id="maps-digit" width="28" height="28" aria-hidden="true"></canvas></div>
           <div>
-            <div class="lab"><b>Designed by people.</b> The edge filters behind the Feature Engineer's features: horizontal and vertical change.</div>
-            <div class="row" id="filters-human"></div>
+            <div class="lab"><b>Designed by people.</b> Edge strength in four directions, the measurements the Feature Engineer's features are built from.</div>
+            <div class="row" id="maps-human"></div>
           </div>
           <div>
-            <div class="lab"><b>Grown from noise.</b> The Learner's eight first-layer filters, live. They start random.</div>
-            <div class="row" id="filters-learned"></div>
+            <div class="lab"><b>Learned from nothing.</b> What the Learner's eight first-layer filters pick out in the same digit, live. They start as random blur.</div>
+            <div class="row" id="maps-learned"></div>
           </div>
-          <div class="lab" id="filters-note" style="color:var(--ink-3)"></div>
         </div>
       </div>
       <div class="inst-body" style="margin-top:1rem">
@@ -657,7 +660,7 @@ footer.colophon { border-top: 1px solid var(--rule); margin-top: 3rem; padding-b
   </div>
 
   <div class="col">
-    <p>All three see the same 12,000 handwritten digits from the MNIST collection and are graded on 2,000 others they never see during training. The horizontal axis counts the floating-point operations each one spends learning. The Rulebook spends none, so it is a flat line: its knowledge arrived complete.</p>
+    <p>All three see the same 12,000 handwritten digits from the MNIST collection, and all three are graded on MNIST's official test set: 10,000 digits written by other people, which none of them sees during training. The horizontal axis counts the floating-point operations each one spends learning. The Rulebook spends none, so it is a flat line: its knowledge arrived complete.</p>
     <p id="diary-intro">The Rulebook was written for this page by an AI model, working the way researchers did in the 1970s: look at the digits it gets wrong, write a better rule, test again. Being a machine, it worked fast, and it logged every revision. Here is the diary. Hover over or tap a point to read what changed.</p>
     <figure class="figure" id="diary-fig">
       <div class="panel"><div class="chart ratio-diary" id="diary-chart"><canvas aria-label="The Rulebook's accuracy after each revision"></canvas></div></div>
@@ -815,7 +818,7 @@ footer.colophon { border-top: 1px solid var(--rule); margin-top: 3rem; padding-b
   <div class="col methods" id="methods">
     <h3>How the experiments work</h3>
     <p><b>Tournament.</b> Connect Four, 7 columns by 6 rows. The Searcher is plain UCT Monte Carlo tree search with uniformly random playouts, an exploration constant of 0.5, and proofs of forced wins and losses propagated inside the tree (MCTS-Solver), which also uses nothing but the rules. Levels run from 1 to 65,536 imagined games per move in steps of four; slower devices stop at 16,384. Each level is 32 games over 16 random two-move openings, each opening played once with each side moving first. A win scores 1, a draw ½. Whiskers are 95% intervals. Results vary a little from run to run because the openings and the Searcher's imagination are random.</p>
-    <p><b>Training race.</b> 12,000 training and 2,000 test images, sampled at random (seed 1957) from the MNIST training and test sets. The Learner is a convolutional network (5×5 convolutions with 8 and then 16 filters, ReLU, 2×2 max-pooling, a linear output layer) trained with Adam at batch size 32, learning rate 0.003 with cosine decay, for 8 epochs, with its minibatch gradients computed in parallel across your device's cores. The Feature Engineer uses HOG features (4×4-pixel cells, 9 orientation bins, 2×2-cell blocks with L2-Hys normalisation, 1,296 numbers per image) and multinomial logistic regression trained the same way for 12 epochs. FLOP counts are analytic: a multiply-add counts as two operations, and the forward pass, backward pass and feature extraction are all counted. Evaluation is not. Neither program sees shifted or distorted copies of the data.</p>
+    <p><b>Training race.</b> 12,000 training images sampled at random (seed 1957) from MNIST's 60,000, and all 10,000 MNIST test images. Points along the way are measured on a fixed random 2,500 of the test images; each program's final point uses all 10,000. The Learner is a convolutional network (5×5 convolutions with 8 and then 16 filters, ReLU, 2×2 max-pooling, a linear output layer) trained with Adam at batch size 32, learning rate 0.003 with cosine decay, for 8 epochs, with its minibatch gradients computed in parallel across your device's cores. The Feature Engineer uses HOG features (4×4-pixel cells, 9 orientation bins, 2×2-cell blocks with L2-Hys normalisation, 1,296 numbers per image) and multinomial logistic regression trained the same way for 12 epochs. FLOP counts are analytic: a multiply-add counts as two operations, and the forward pass, backward pass and feature extraction are all counted. Evaluation is not. Neither program sees shifted or distorted copies of the data.</p>
     <p><b>Rulebook.</b> Written by hand for this page, with no fitted parameters: thresholds were set by looking at development digits, which were drawn only from the training set.</p>
     <p><b>New worlds.</b> Each variant is a 24-game match at 1,024 imagined games per move, over random two-move openings with sides swapped. If the Searcher scores under 50%, it plays another 24 games with four times the imagination.</p>
     <p><b>Compute counts.</b> “Positions imagined” counts every piece placed in an imagined game, plus the Expert's moves. “FLOP learned” counts training operations in Experiment 3.</p>
