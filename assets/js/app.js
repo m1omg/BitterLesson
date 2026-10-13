@@ -753,9 +753,9 @@
   cost.draw = function () {
     const S = this.surface, ctx = S.fit(), w = S.w, h = S.h, P = palette();
     const small = w < 520;
-    const A = new Axes(w, h, { l: small ? 40 : 52, r: small ? 14 : 24, t: 26, b: 30 }, { min: 1958, max: 2028 }, { min: 1e-3, max: 1e12, log: true });
+    const A = new Axes(w, h, { l: small ? 40 : 52, r: small ? 14 : 24, t: 26, b: 30 }, { min: 1958, max: 2028 }, { min: 1e-3, max: 1e14, log: true });
     const yt = [];
-    for (let e = -3; e <= 12; e++) yt.push({ v: Math.pow(10, e), label: null, strong: e % 3 === 0 });
+    for (let e = -3; e <= 14; e++) yt.push({ v: Math.pow(10, e), label: null, strong: e % 3 === 0 });
     const labels = { 1e12: '$1T', 1e9: '$1B', 1e6: '$1M', 1e3: '$1K', 1: '$1', 1e-3: '0.1¢' };
     for (const t of yt) if (labels[t.v] != null) t.label = labels[t.v];
     const xt = [];
@@ -770,7 +770,7 @@
     for (const c of COST) { ctx.beginPath(); ctx.arc(A.tx(c[0]), A.ty(c[1]), 3.5, 0, Math.PI * 2); ctx.fillStyle = P.compute; ctx.fill(); }
     ctx.restore();
     const first = COST[0], last = COST[COST.length - 1];
-    label(ctx, first[0] + ': ' + fmtDollars(first[1]), A.tx(first[0]) + 6, A.ty(first[1]) + 17, { font: FONT.sans(small ? 11.5 : 12.5, 600), color: P.ink });
+    label(ctx, first[0] + ': ' + fmtDollars(first[1]), A.tx(first[0]) + 8, A.ty(first[1]) - 13, { font: FONT.sans(small ? 11.5 : 12.5, 600), color: P.ink });
     label(ctx, last[0] + ': ' + fmtDollars(last[1]), A.tx(last[0]) - 9, A.ty(last[1]) - 14, { align: 'right', font: FONT.sans(small ? 11.5 : 12.5, 600), color: P.ink });
     if (!small) {
       const mid = COST[2];
@@ -2442,6 +2442,44 @@
     },
   };
 
+  // ================================================================ share
+  const share = {
+    init() {
+      $('share-copy').addEventListener('click', () => this.copy());
+    },
+    text() {
+      const lines = ['I re-ran The Bitter Lesson (Rich Sutton, 2019) on my own device.'];
+      const x = tour.computeCrossover();
+      const top = tour.levels.filter((L) => L.n > 0).pop();
+      if (tour.games && top) lines.push('Search: a Monte Carlo searcher that knows only the rules ' + (x ? 'overtook a hand-written Connect Four expert at about ' + fmtInt(sig2(x.sims)) + ' imagined games per move' : 'played a hand-written Connect Four expert') + ', and scored ' + pct(tour.rate(top)) + ' at ' + fmtInt(top.sims) + '.');
+      const rec = play.record;
+      const won = rec.map((r, i) => (r.w ? i : -1)).filter((i) => i >= 0);
+      const maxWon = won.length ? Math.max(...won) : -1;
+      const lostAbove = rec.map((r, i) => (r.l && !r.w && i > maxWon ? i : -1)).filter((i) => i >= 0);
+      if (maxWon >= 0 || lostAbove.length) lines.push('Me: ' + (maxWon >= 0 ? 'I beat it up to ' + fmtInt(LADDER[maxWon]) + ' imagined games per move' : 'I never beat it') + (lostAbove.length ? '; at ' + fmtInt(LADDER[Math.min(...lostAbove)]) + ' it beat me.' : '.'));
+      const xs = race.crossings();
+      const c = race.cnn[race.cnn.length - 1], feFin = race.fe.find((p) => p.final);
+      if (race.done && race.rulebook && c && feFin) lines.push('Learning: a small neural network passed ' + (BL.rulebook ? BL.rulebook.RULE_COUNT + ' ' : '') + 'hand-written digit rules after ' + fmtTime(race.timeAtFlops(xs.rulebook || 0)) + ' of training' + (xs.fe ? ' and hand-designed edge features after ' + fmtTime(race.timeAtFlops(xs.fe)) : '') + '. Mistakes on 10,000 test digits: rules ' + fmtInt(race.rulebook.errors) + ', features ' + fmtInt(feFin.errors) + ', network ' + fmtInt(c.errors) + '.');
+      const V = vary.results;
+      if (V && V[1] && V[1][0] && V[1][0].n) lines.push('Generality: flip one rule (four in a row loses) and the same searcher, unchanged, scored ' + pct(V[1][0].score / V[1][0].n) + ' against the expert.');
+      if (lines.length === 1) lines.push('(Run the experiments on the page to fill this in.)');
+      return lines.join('\n');
+    },
+    async copy() {
+      const t = this.text(), ta = $('share-text');
+      ta.value = t;
+      try {
+        await navigator.clipboard.writeText(t);
+        $('share-status').textContent = 'Copied.';
+        ta.hidden = true;
+      } catch (e) {
+        ta.hidden = false;
+        ta.focus(); ta.select();
+        $('share-status').textContent = 'Select the text below and copy it.';
+      }
+    },
+  };
+
   // ================================================================ boot
   function boot() {
     tour.init();
@@ -2452,6 +2490,7 @@
     vary.init();
     inventor.init();
     multiples.init();
+    share.init();
     meter.paint(true);
     invalidate();
     window.__bl = { tour, race, play, vary, inventor, meter, scale, draw };
