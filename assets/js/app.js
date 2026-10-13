@@ -1542,7 +1542,7 @@
         this.sidePool.run({ type: 'rulebookEval' }).then((m) => {
           if (m.type !== 'done') return;
           const n = this.data.test.count;
-          this.rulebook = { errors: m.wrong.length, rate: m.wrong.length / n, n, wrong: m.wrong, ms: m.ms };
+          this.rulebook = { errors: m.wrong.length, rate: m.wrong.length / n, n, wrong: m.wrong, preds: m.preds, ms: m.ms };
           invalidate(this.chart); this._readouts(); multiples.update();
         });
       }
@@ -1589,7 +1589,7 @@
         try { m = await this.evalPool.run({ type: 'cnnEval', config, w: snap.w, from: 0, to: n }); } catch (e) { break; }
         if (!m || m.type !== 'done') break;
         this.cnn.push({ flops: snap.flops, rate: m.wrong.length / n, n, errors: m.wrong.length, seen: snap.seen, final: snap.full });
-        if (snap.full) this.cnnWrong = m.wrong;
+        if (snap.full) { this.cnnWrong = m.wrong; this.cnnPreds = m.preds; }
         invalidate(this.chart); this._readouts(); multiples.update();
       }
       this.evalLoop = null;
@@ -1741,6 +1741,53 @@
       else if (x.feBest != null) parts.push('This time it did not get below the Feature Engineer; on digits, the hand-designed features are very good.');
       if (c && c.final && this.rulebook && feFin) parts.push('Mistakes on all ' + fmtInt(c.n) + ' test digits: Rulebook ' + fmtInt(this.rulebook.errors) + ', Feature Engineer ' + fmtInt(feFin.errors) + ', Learner ' + fmtInt(c.errors) + '.');
       $('race-result').textContent = parts.join(' ');
+      this._gallery();
+    },
+    // Real mistakes, side by side.
+    _gallery() {
+      const box = $('race-gallery');
+      if (!box || !this.rulebook || !this.cnnWrong || !this.rulebook.preds) return;
+      const test = this.data.test;
+      const learnerWrong = new Set(this.cnnWrong);
+      const pick = (arr, n, seed) => {
+        const r = BL.makeRng(seed), a = arr.slice();
+        for (let i = a.length - 1; i > 0; i--) { const j = r() % (i + 1); const t = a[i]; a[i] = a[j]; a[j] = t; }
+        return a.slice(0, n);
+      };
+      const rbPred = new Map(this.rulebook.wrong.map((w, i) => [w, this.rulebook.preds[i]]));
+      const cnnPred = new Map(this.cnnWrong.map((w, i) => [w, this.cnnPreds ? this.cnnPreds[i] : -1]));
+      const rbOnly = this.rulebook.wrong.filter((i) => !learnerWrong.has(i));
+      const rows = [
+        { cls: 'k', title: 'Misread by the Rulebook, read correctly by the Learner', count: rbOnly.length + ' such digits', items: pick(rbOnly, 16, 7), pred: rbPred },
+        { cls: 'c', title: 'Misread by the Learner', count: this.cnnWrong.length + ' in all. Judge for yourself how readable they are.', items: pick(this.cnnWrong, 16, 11), pred: cnnPred },
+      ];
+      box.innerHTML = '';
+      for (const row of rows) {
+        const sec = document.createElement('div');
+        sec.className = 'gal ' + row.cls;
+        const h = document.createElement('div');
+        h.className = 'gal-h';
+        h.innerHTML = '<b></b> <span></span>';
+        h.firstChild.textContent = row.title + '.';
+        h.lastChild.textContent = row.count;
+        sec.appendChild(h);
+        const grid = document.createElement('div');
+        grid.className = 'gal-grid';
+        for (const i of row.items) {
+          const fig = document.createElement('figure');
+          const c = document.createElement('canvas');
+          c.width = 28; c.height = 28;
+          paintGray(c, test.images.subarray(i * 784, i * 784 + 784), 28, 28);
+          const cap = document.createElement('figcaption');
+          cap.textContent = test.labels[i] + ' → ' + row.pred.get(i);
+          cap.title = 'written as ' + test.labels[i] + ', read as ' + row.pred.get(i);
+          fig.appendChild(c); fig.appendChild(cap);
+          grid.appendChild(fig);
+        }
+        sec.appendChild(grid);
+        box.appendChild(sec);
+      }
+      box.hidden = false;
     },
   };
 

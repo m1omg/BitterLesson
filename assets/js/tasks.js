@@ -161,26 +161,26 @@
     if (W) {
       W.P.set(msg.w);
       W.exports.prepare();
-      const test = state.test, wrong = [];
+      const test = state.test, wrong = [], preds = [];
       for (let s = msg.from; s < msg.to; s += W.maxBatch) {
         const n = Math.min(W.maxBatch, msg.to - s);
         W.X.set(test.images.subarray(s * 784, (s + n) * 784), 0);
         W.exports.predict(n);
-        for (let j = 0; j < n; j++) if (W.PRED[j] !== test.labels[s + j]) wrong.push(s + j);
+        for (let j = 0; j < n; j++) if (W.PRED[j] !== test.labels[s + j]) { wrong.push(s + j); preds.push(W.PRED[j]); }
       }
-      post({ id: msg.id, type: 'done', wrong, wasm: true });
+      post({ id: msg.id, type: 'done', wrong, preds, wasm: true });
       return;
     }
     const net = replica(msg.config);
     net.setParams(msg.w);
-    const wrong = [];
+    const wrong = [], preds = [];
     for (let i = msg.from; i < msg.to; i++) {
       const z = net.forward(image(state.test, i));
       let b = 0;
       for (let k = 1; k < 10; k++) if (z[k] > z[b]) b = k;
-      if (b !== state.test.labels[i]) wrong.push(i);
+      if (b !== state.test.labels[i]) { wrong.push(i); preds.push(b); }
     }
-    post({ id: msg.id, type: 'done', wrong });
+    post({ id: msg.id, type: 'done', wrong, preds });
   }
 
   // The Feature Engineer trains start to finish in one task, reporting its
@@ -246,13 +246,13 @@
 
   // The Rulebook reads every test digit once.
   function rulebookEval(msg, post) {
-    const test = state.test, wrong = [];
+    const test = state.test, wrong = [], preds = [];
     const t0 = now();
     for (let i = 0; i < test.count; i++) {
       const r = BL.rulebook.classify(image(test, i));
-      if (r.digit !== test.labels[i]) wrong.push(i);
+      if (r.digit !== test.labels[i]) { wrong.push(i); preds.push(r.digit); }
     }
-    post({ id: msg.id, type: 'done', wrong, ms: now() - t0 });
+    post({ id: msg.id, type: 'done', wrong, preds, ms: now() - t0 });
   }
 
   // ------------------------------------------------------------ dispatch

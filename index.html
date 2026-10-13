@@ -383,6 +383,16 @@ button.primary:hover:not(:disabled) { background: var(--ink-2); border-color: va
 .verdict.h .bars i { background: var(--hybrid); }
 .bars-x { display: grid; grid-template-columns: repeat(10, minmax(0, 1fr)); gap: 2px; font-family: var(--mono); font-size: .62rem; color: var(--ink-3); text-align: center; }
 
+.gallery { display: grid; gap: 1rem; margin-top: .4rem; }
+.gal-h { font-family: var(--sans); font-size: .9rem; color: var(--ink-2); margin-bottom: .45rem; }
+.gal-h b { font-weight: 600; }
+.gal.k .gal-h b { color: var(--knowledge-ink); }
+.gal.c .gal-h b { color: var(--compute-ink); }
+.gal-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(3.4rem, 1fr)); gap: .45rem; }
+.gal-grid figure { margin: 0; }
+.gal-grid canvas { aspect-ratio: 1; height: auto; border-radius: 3px; background: #05070a; image-rendering: pixelated; }
+.gal-grid figcaption { font-family: var(--mono); font-size: .72rem; color: var(--ink-2); text-align: center; margin-top: .15rem; }
+
 /* generality */
 .variants { display: grid; gap: .6rem; }
 .variant { display: grid; grid-template-columns: minmax(0, 1fr); gap: .5rem; padding: .8rem .9rem; }
@@ -670,6 +680,7 @@ footer.colophon { border-top: 1px solid var(--rule); margin-top: 3rem; padding-b
         </div>
         <div class="readouts" id="race-readouts"></div>
         <p class="result" id="race-result"></p>
+        <div class="gallery" id="race-gallery" hidden></div>
       </div>
     </div>
   </div>
