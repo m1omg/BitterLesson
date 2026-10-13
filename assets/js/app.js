@@ -1585,10 +1585,11 @@
       ]);
       if (!this.running) return;
       this.t0 = now();
+      const run = this.runId;
       // The Rulebook reads all the test digits once.
       if (BL.rulebook) {
         this.sidePool.run({ type: 'rulebookEval' }).then((m) => {
-          if (m.type !== 'done') return;
+          if (m.type !== 'done' || run !== this.runId) return;
           const n = this.data.test.count;
           this.rulebook = { errors: m.wrong.length, rate: m.wrong.length / n, n, wrong: m.wrong, preds: m.preds, ms: m.ms };
           invalidate(this.chart); this._readouts(); multiples.update();
@@ -1596,6 +1597,7 @@
       }
       // The Feature Engineer trains on one core.
       this.sidePool.run({ type: 'feTrain', epochs: FE_EPOCHS, checkpoints: CHECKPOINTS, lr: 0.003, batch: 32, seed: 11, evalCount: EVAL_SUBSET }, (m) => {
+        if (run !== this.runId) return;
         if (m.type === 'point') {
           this.fe.push({ flops: Math.max(m.flops, 1e5), rate: m.rate, n: m.n, errors: m.errors, final: m.final });
           meter.add(0, m.flops - this.feFlops); this.feFlops = m.flops;
@@ -1606,12 +1608,13 @@
           meter.add(0, m.flops - this.feFlops); this.feFlops = m.flops;
         }
       }).then((m) => {
-        if (m.type === 'done') { this.feDone = true; this._readouts(); this._maybeDone(); }
+        if (m.type === 'done' && run === this.runId) { this.feDone = true; this._readouts(); this._maybeDone(); }
       });
       // The Learner trains data-parallel across all cores.
       this._trainLoop();
     },
     _reset() {
+      this.runId = (this.runId || 0) + 1;
       this.fe = []; this.cnn = []; this.feDone = false; this.cnnDone = false; this.done = false;
       this.flops = 0; this.seen = 0; this.elapsed = 0; this.feFlops = 0; this.trainEnd = 0; this.pendingSnap = null; this.evalLoop = null;
       this.rulebook = null;
@@ -1629,21 +1632,22 @@
     },
     async _evalLoop() {
       const config = JSON.stringify(CNN_CONFIG);
-      while (this.pendingSnap && this.evalPool) {
+      const run = this.runId;
+      while (this.pendingSnap && this.evalPool && run === this.runId) {
         const snap = this.pendingSnap;
         this.pendingSnap = null;
         const n = snap.full ? this.data.test.count : Math.min(EVAL_SUBSET, this.data.test.count);
         let m;
         try { m = await this.evalPool.run({ type: 'cnnEval', config, w: snap.w, from: 0, to: n }); } catch (e) { break; }
-        if (!m || m.type !== 'done') break;
+        if (!m || m.type !== 'done' || run !== this.runId) break;
         this.cnn.push({ flops: snap.flops, rate: m.wrong.length / n, n, errors: m.wrong.length, seen: snap.seen, final: snap.full });
         if (snap.full) { this.cnnWrong = m.wrong; this.cnnPreds = m.preds; }
         invalidate(this.chart); this._readouts(); multiples.update();
       }
-      this.evalLoop = null;
+      if (run === this.runId) this.evalLoop = null;
     },
     async _trainLoop() {
-      const net = this.net, data = this.data, pool = this.pool;
+      const net = this.net, data = this.data, pool = this.pool, run = this.runId;
       const N = data.train.count, B = CNN_CONFIG.batch;
       const stepsPerEpoch = Math.floor(N / B), totalSteps = stepsPerEpoch * CNN_EPOCHS;
       const rng = BL.digits.makeFloatRng(4242);
@@ -1677,9 +1681,10 @@
             if (shard.length) parts.push(pool.run({ type: 'cnnGrad', config, w, indices: shard }));
           }
           const res = await Promise.all(parts);
-          if (!this.running || res.some((r) => r.type !== 'done')) return;
+          if (!this.running || run !== this.runId || res.some((r) => r.type !== 'done')) return;
           net.zeroGrads();
           for (const r of res) net.addGrads(r.grads);
+          this.engine = res[0].wasm ? 'WebAssembly' : 'JavaScript';
           net.setLearningRate(CNN_CONFIG.lr * 0.5 * (1 + Math.cos(Math.PI * step / totalSteps)));
           net.step(B);
           this.trainMs += now() - ts;
@@ -1702,11 +1707,12 @@
           }
         }
       }
-      if (!this.running) return;
+      if (!this.running || run !== this.runId) return;
       this.trainEnd = now();
       this._paintFilters();
       if (this.evalLoop) await this.evalLoop;
       await this._queueEval(true);
+      if (run !== this.runId) return;
       this.cnnDone = true;
       invalidate(this.chart);
       this._maybeDone();
@@ -1775,8 +1781,8 @@
       if (c) add('Learner', fmtRate(c.rate) + ' · epoch ' + (this.epoch || 0) + ' of ' + CNN_EPOCHS);
       add('Learner FLOP', fmtSci(this.flops));
       add('time', fmtTime(this.running ? now() - this.t0 : this.elapsed));
-      if (this.running) $('race-status').textContent = 'training ' + (workersBroken ? 'on the main thread' : 'on ' + (this.pool ? this.pool.size : 1) + ' cores') + ' · ' + fmtInt(this.seen) + ' examples';
-      else if (this.done) $('race-status').textContent = 'finished';
+      if (this.running) $('race-status').textContent = 'training ' + (workersBroken ? 'on the main thread' : 'on ' + (this.pool ? this.pool.size : 1) + ' cores') + (this.engine ? ' in ' + this.engine : '') + ' · ' + fmtInt(this.seen) + ' examples';
+      else if (this.done) $('race-status').textContent = 'finished' + (this.engine ? ' · trained in ' + this.engine : '');
       else if (stopped) $('race-status').textContent = 'stopped';
     },
     _result() {
